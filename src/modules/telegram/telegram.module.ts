@@ -1,0 +1,18 @@
+import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bull';
+import { ScheduleModule } from '@nestjs/schedule';
+import { TelegramService } from './telegram.service';
+import { TelegramProcessor } from './telegram.processor';
+import { CrmModule } from '../crm/crm.module';
+
+@Module({
+  imports: [
+    BullModule.registerQueue({ name: 'approval_queue' }),
+    BullModule.registerQueue({ name: 'outreach_queue' }),
+    ScheduleModule,
+    CrmModule,
+  ],
+  providers: [TelegramService, TelegramProcessor],
+  exports: [TelegramService],
+})
+export class TelegramModule {}
