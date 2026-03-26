@@ -4,13 +4,12 @@ import { Queue } from 'bullmq';
 import { CrmService } from '../crm/crm.service';
 import { spawn } from 'child_process';
 import * as path from 'path';
-import axios from 'axios';
+import OpenAI from 'openai';
 
 @Injectable()
 export class EnricherService {
   private readonly logger = new Logger(EnricherService.name);
-  private readonly ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
-  private readonly ollamaModel = process.env.OLLAMA_MODEL || 'llama3';
+  private readonly openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   constructor(
     @InjectQueue('wa_test_queue') private waTestQueue: Queue,
@@ -162,10 +161,15 @@ asyncio.run(crawl(sys.argv[1]))
 
           if (markdown.length > 50) {
             try {
-              const analysis = await this.analyzeWithOllama(
-                `Analise este conteúdo de site de casa de câmbio e responda em JSON com: score (0-100, onde 100=tem preços atualizados+WhatsApp+horário de funcionamento), resumo (máximo 100 chars descrevendo o site). Conteúdo: ${markdown.substring(0, 1500)}`
-              );
-              const parsed = JSON.parse(analysis.match(/\{[^}]+\}/)?.[0] || '{}');
+              const response = await this.openai.chat.completions.create({
+                model: 'gpt-4o-mini',
+                messages: [{
+                  role: 'user',
+                  content: `Analise este conteúdo de site de casa de câmbio e responda APENAS em JSON com: score (0-100, onde 100=tem preços atualizados+WhatsApp+horário de funcionamento), resumo (máximo 100 chars descrevendo o site). Conteúdo: ${markdown.substring(0, 1500)}`,
+                }],
+                response_format: { type: 'json_object' },
+              });
+              const parsed = JSON.parse(response.choices[0].message.content || '{}');
               score = parsed.score || 30;
               resumo = parsed.resumo || 'Site analisado';
             } catch {
@@ -198,15 +202,6 @@ asyncio.run(crawl(sys.argv[1]))
       });
       proc.on('error', () => resolve({ error: 'subprocess_error' }));
     });
-  }
-
-  private async analyzeWithOllama(prompt: string): Promise<string> {
-    const response = await axios.post(`${this.ollamaUrl}/api/generate`, {
-      model: this.ollamaModel,
-      prompt,
-      stream: false,
-    }, { timeout: 30000 });
-    return response.data.response;
   }
 
   private extractInstagramUsername(igUrl: string): string | null {

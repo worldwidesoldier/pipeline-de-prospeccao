@@ -3,15 +3,15 @@ import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bullmq';
 import { CrmService } from '../crm/crm.service';
 import axios from 'axios';
+import OpenAI from 'openai';
 
 @Injectable()
 export class WaTesterService {
   private readonly logger = new Logger(WaTesterService.name);
-  private readonly evolutionUrl = process.env.EVOLUTION_API_URL || 'https://evolution-api-fy3c.onrender.com';
+  private readonly evolutionUrl = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
   private readonly evolutionKey = process.env.EVOLUTION_API_KEY;
   private readonly instance = process.env.EVOLUTION_INSTANCE_PROSPECCAO;
-  private readonly ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
-  private readonly ollamaModel = process.env.OLLAMA_MODEL || 'llama3';
+  private readonly openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   // Map para rastrear testes em andamento: numero → { leadId, waTestId, enviado_em }
   private pendingTests = new Map<string, { leadId: string; waTestId: string; enviadoEm: Date }>();
@@ -134,16 +134,17 @@ export class WaTesterService {
 
   private async avaliarQualidadeResposta(texto: string): Promise<number> {
     try {
-      const response = await axios.post(`${this.ollamaUrl}/api/generate`, {
-        model: this.ollamaModel,
-        prompt: `Avalie a qualidade desta resposta de uma casa de câmbio para a pergunta sobre cotação do dólar. Responda APENAS com um número de 0 a 100 (sem texto extra), onde: 0=sem resposta, 30=resposta muito vaga, 60=resposta com alguma informação, 80=resposta com cotação e informações úteis, 100=resposta completa com cotação, horário e contato. Resposta recebida: "${texto}"`,
-        stream: false,
-      }, { timeout: 20000 });
-
-      const num = parseInt(response.data.response.trim().match(/\d+/)?.[0] || '50');
+      const response = await this.openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [{
+          role: 'user',
+          content: `Avalie a qualidade desta resposta de uma casa de câmbio para a pergunta sobre cotação do dólar. Responda APENAS com um número de 0 a 100 (sem texto extra), onde: 0=sem resposta, 30=resposta muito vaga, 60=resposta com alguma informação, 80=resposta com cotação e informações úteis, 100=resposta completa com cotação, horário e contato. Resposta recebida: "${texto}"`,
+        }],
+      });
+      const num = parseInt(response.choices[0].message.content?.trim().match(/\d+/)?.[0] || '50');
       return Math.min(100, Math.max(0, num));
     } catch {
-      return 50; // Score médio em caso de erro
+      return 50;
     }
   }
 

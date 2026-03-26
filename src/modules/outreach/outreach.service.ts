@@ -10,7 +10,7 @@ import axios from 'axios';
 export class OutreachService {
   private readonly logger = new Logger(OutreachService.name);
   private readonly openai: OpenAI;
-  private readonly evolutionUrl = process.env.EVOLUTION_API_URL || 'https://evolution-api-fy3c.onrender.com';
+  private readonly evolutionUrl = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
   private readonly evolutionKey = process.env.EVOLUTION_API_KEY;
   private readonly instance = process.env.EVOLUTION_INSTANCE_PROSPECCAO;
 
