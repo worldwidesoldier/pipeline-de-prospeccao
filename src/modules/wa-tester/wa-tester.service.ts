@@ -29,13 +29,12 @@ export class WaTesterService {
       return;
     }
 
-    const mensagem = 'Oi, tudo bem? Queria saber o valor do dólar hoje pra compra. Obrigado!';
+    const mensagem = await this.gerarMensagemTeste();
     const numero = this.formatNumber(lead.whatsapp);
 
     this.logger.log(`Enviando teste para ${lead.nome} (${numero})`);
 
     try {
-      // Criar registro do teste
       const waTest = await this.crmService.createWaTest({
         lead_id: leadId,
         numero_testado: numero,
@@ -44,13 +43,9 @@ export class WaTesterService {
         respondeu: false,
       });
 
-      // Enviar via Evolution API
       await axios.post(
         `${this.evolutionUrl}/message/sendText/${this.instance}`,
-        {
-          number: numero,
-          text: mensagem,
-        },
+        { number: numero, text: mensagem },
         {
           headers: {
             'apikey': this.evolutionKey,
@@ -60,7 +55,6 @@ export class WaTesterService {
         }
       );
 
-      // Registrar como teste pendente
       this.pendingTests.set(numero, {
         leadId,
         waTestId: waTest.id,
@@ -73,20 +67,18 @@ export class WaTesterService {
           this.pendingTests.delete(numero);
           await this.handleNoResponse(leadId, waTest.id);
         }
-      }, 4 * 60 * 60 * 1000); // 4 horas
+      }, 4 * 60 * 60 * 1000);
 
       await this.crmService.updateLead(leadId, { status: 'tested' });
-      this.logger.log(`Mensagem de teste enviada para ${lead.nome}`);
+      this.logger.log(`Mensagem de teste enviada para ${lead.nome}: "${mensagem}"`);
 
     } catch (err) {
       this.logger.error(`Erro ao enviar teste para ${lead.nome}: ${err.message}`);
-      // Mesmo com erro, manda para scoring (sem dados de WA)
       await this.scoringQueue.add('score_lead', { leadId });
     }
   }
 
   async handleWebhook(data: any) {
-    // Webhook recebe mensagens de resposta via Evolution API
     const fromNumber = data?.data?.key?.remoteJid?.replace('@s.whatsapp.net', '');
     const messageText = data?.data?.message?.conversation ||
                         data?.data?.message?.extendedTextMessage?.text || '';
@@ -105,10 +97,8 @@ export class WaTesterService {
 
     this.logger.log(`Resposta recebida de ${fromNumber} em ${tempoMin}min`);
 
-    // Avaliar qualidade da resposta com Ollama
     const qualidade = await this.avaliarQualidadeResposta(messageText);
 
-    // Atualizar wa_test
     await this.crmService.updateWaTest(pending.waTestId, {
       respondeu: true,
       respondido_em: respondidoEm.toISOString(),
@@ -117,18 +107,47 @@ export class WaTesterService {
       resposta_texto: messageText.substring(0, 500),
     });
 
-    // Avançar para scoring
     await this.scoringQueue.add('score_lead', { leadId: pending.leadId });
+  }
+
+  private async gerarMensagemTeste(): Promise<string> {
+    const fallbacks = [
+      'Oi, tudo bem? Queria saber o valor do dólar hoje pra compra. Obrigado!',
+      'Boa tarde! Qual o câmbio do dólar agora? Preciso comprar alguns.',
+      'Olá! Qual a taxa do dólar de vocês hoje?',
+      'Oi! Estou querendo comprar dólar, qual é o valor de hoje?',
+      'Olá, boa tarde! Qual o valor do dólar para turismo?',
+    ];
+
+    try {
+      const completion = await this.openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [{
+          role: 'user',
+          content: `Gere UMA mensagem curta e natural de WhatsApp de uma pessoa querendo saber o câmbio do dólar numa casa de câmbio. A mensagem deve:
+- Soar como uma pessoa real, informal
+- Ser diferente cada vez (varie o horário, a razão — viagem, compra online, etc.)
+- Ter entre 1 e 2 frases
+- Estar em português brasileiro
+- NÃO usar emojis excessivos
+Retorne APENAS a mensagem, sem aspas ou explicações.`,
+        }],
+        max_tokens: 80,
+        temperature: 1.0,
+      });
+      const msg = completion.choices[0].message.content?.trim();
+      return msg || fallbacks[Math.floor(Math.random() * fallbacks.length)];
+    } catch {
+      return fallbacks[Math.floor(Math.random() * fallbacks.length)];
+    }
   }
 
   private async handleNoResponse(leadId: string, waTestId: string) {
     this.logger.log(`Sem resposta após 4h para lead ${leadId}`);
-
     await this.crmService.updateWaTest(waTestId, {
       respondeu: false,
-      tempo_resposta_min: 240, // 4h = 240min (não respondeu)
+      tempo_resposta_min: 240,
     });
-
     await this.scoringQueue.add('score_lead', { leadId });
   }
 

@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fair Assist — Pipeline</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: #2e3248;
+      --text: #e2e8f0;
+      --muted: #8892a4;
+      --green: #22c55e;
+      --yellow: #eab308;
+      --red: #ef4444;
+      --blue: #3b82f6;
+      --purple: #a855f7;
+      --orange: #f97316;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* ── HEADER ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .logo { font-weight: 700; font-size: 16px; letter-spacing: -0.3px; }
+    .logo span { color: var(--blue); }
+    .header-right { display: flex; align-items: center; gap: 16px; }
+    #clock { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+    .refresh-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: background 0.15s;
+    }
+    .refresh-btn:hover { background: var(--border); }
+
+    /* ── LAYOUT ── */
+    main { max-width: 1400px; margin: 0 auto; padding: 24px; }
+    section { margin-bottom: 32px; }
+    h2 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 12px; }
+
+    /* ── STATS GRID ── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 12px;
+    }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; }
+    .stat-value { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .stat-value.green { color: var(--green); }
+    .stat-value.blue { color: var(--blue); }
+    .stat-value.yellow { color: var(--yellow); }
+    .stat-value.purple { color: var(--purple); }
+    .stat-value.orange { color: var(--orange); }
+    .stat-value.red { color: var(--red); }
+
+    /* ── PIPELINE BAR ── */
+    .pipeline-bar {
+      display: flex;
+      gap: 2px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      overflow-x: auto;
+    }
+    .pipeline-stage {
+      flex: 1;
+      min-width: 80px;
+      text-align: center;
+    }
+    .stage-count {
+      font-size: 22px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .stage-label {
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-top: 4px;
+    }
+    .stage-arrow { color: var(--border); font-size: 18px; display: flex; align-items: center; padding-top: 4px; }
+
+    /* ── PENDING APPROVALS ── */
+    .approval-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 14px;
+    }
+    .approval-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .approval-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 12px;
+    }
+    .lead-name { font-weight: 600; font-size: 15px; }
+    .lead-location { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .score-badge {
+      font-size: 18px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-variant-numeric: tabular-nums;
+      flex-shrink: 0;
+    }
+    .score-badge.hot { background: rgba(249, 115, 22, 0.15); color: var(--orange); }
+    .score-badge.warm { background: rgba(234, 179, 8, 0.15); color: var(--yellow); }
+    .score-badge.cold { background: rgba(59, 130, 246, 0.15); color: var(--blue); }
+
+    .approval-metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .metric { background: var(--surface2); border-radius: 6px; padding: 8px 10px; }
+    .metric-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .metric-value { font-size: 13px; font-weight: 600; margin-top: 2px; }
+    .metric-value.good { color: var(--green); }
+    .metric-value.bad { color: var(--red); }
+    .metric-value.mid { color: var(--yellow); }
+
+    .wa-response-text {
+      font-size: 12px;
+      color: var(--muted);
+      font-style: italic;
+      background: var(--surface2);
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-bottom: 14px;
+      max-height: 60px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .approval-actions { display: flex; gap: 8px; }
+    .btn {
+      flex: 1;
+      padding: 8px 12px;
+      border-radius: 7px;
+      border: none;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-approve { background: var(--green); color: #000; }
+    .btn-discard { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+    .btn-discard:hover { color: var(--red); border-color: var(--red); }
+
+    /* ── LEADS TABLE ── */
+    .table-controls {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .table-controls select, .table-controls input {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 7px 12px;
+      border-radius: 7px;
+      font-size: 13px;
+      outline: none;
+    }
+    .table-controls input { flex: 1; min-width: 200px; }
+    .table-controls select:focus, .table-controls input:focus { border-color: var(--blue); }
+
+    .table-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    thead { background: var(--surface2); }
+    th {
+      padding: 10px 14px;
+      text-align: left;
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: 600;
+    }
+    td {
+      padding: 10px 14px;
+      border-top: 1px solid var(--border);
+      font-size: 13px;
+      vertical-align: middle;
+    }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+
+    .status-pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .status-novo { background: rgba(139,92,246,0.15); color: #a78bfa; }
+    .status-enriched { background: rgba(59,130,246,0.15); color: #60a5fa; }
+    .status-tested { background: rgba(234,179,8,0.15); color: #fbbf24; }
+    .status-scored { background: rgba(249,115,22,0.15); color: #fb923c; }
+    .status-pending_approval { background: rgba(239,68,68,0.15); color: #f87171; }
+    .status-approved { background: rgba(34,197,94,0.15); color: #4ade80; }
+    .status-outreach { background: rgba(6,182,212,0.15); color: #22d3ee; }
+    .status-descartado { background: rgba(100,116,139,0.15); color: #94a3b8; }
+
+    .pagination {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 14px;
+      border-top: 1px solid var(--border);
+      background: var(--surface2);
+    }
+    .pagination-info { color: var(--muted); font-size: 12px; }
+    .pagination-btns { display: flex; gap: 6px; }
+    .page-btn {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 5px 10px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .page-btn:hover:not(:disabled) { border-color: var(--blue); }
+
+    /* ── EMPTY / LOADING STATES ── */
+    .empty {
+      padding: 40px;
+      text-align: center;
+      color: var(--muted);
+    }
+    .loading { animation: pulse 1.5s ease-in-out infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    .dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+    .dot.green { background: var(--green); }
+    .dot.red { background: var(--red); }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Fair <span>Assist</span> — Pipeline de Prospecção</div>
+  <div class="header-right">
+    <div id="clock">--:--:--</div>
+    <button class="refresh-btn" onclick="loadAll()">↻ Atualizar</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- TODAY'S STATS -->
+  <section>
+    <h2>Hoje</h2>
+    <div class="stats-grid" id="stats-grid">
+      <div class="stat-card"><div class="stat-label">Prospectados</div><div class="stat-value blue loading" id="s-prospectados">—</div></div>
+      <div class="stat-card"><div class="stat-label">Enriquecidos</div><div class="stat-value blue loading" id="s-enriquecidos">—</div></div>
+      <div class="stat-card"><div class="stat-label">Testados WA</div><div class="stat-value yellow loading" id="s-testados">—</div></div>
+      <div class="stat-card"><div class="stat-label">Aprovados</div><div class="stat-value orange loading" id="s-aprovados">—</div></div>
+      <div class="stat-card"><div class="stat-label">Enviados</div><div class="stat-value purple loading" id="s-enviados">—</div></div>
+      <div class="stat-card"><div class="stat-label">Responderam</div><div class="stat-value green loading" id="s-respostas">—</div></div>
+      <div class="stat-card"><div class="stat-label">Convertidos</div><div class="stat-value green loading" id="s-convertidos">—</div></div>
+    </div>
+  </section>
+
+  <!-- PIPELINE FUNNEL -->
+  <section>
+    <h2>Pipeline — Total por Etapa</h2>
+    <div class="pipeline-bar" id="pipeline-bar">
+      <div class="pipeline-stage">
+        <div class="stage-count loading" id="p-novo" style="color:var(--purple)">—</div>
+        <div class="stage-label">Novos</div>
+      </div>
+      <div class="stage-arrow">›</div>
+      <div class="pipeline-stage">
+        <div class="stage-count loading" id="p-enriched" style="color:var(--blue)">—</div>
+        <div class="stage-label">Enriquecidos</div>
+      </div>
+      <div class="stage-arrow">›</div>
+      <div class="pipeline-stage">
+        <div class="stage-count loading" id="p-tested" style="color:var(--yellow)">—</div>
+        <div class="stage-label">Testados</div>
+      </div>
+      <div class="stage-arrow">›</div>
+      <div class="pipeline-stage">
+        <div class="stage-count loading" id="p-scored" style="color:var(--orange)">—</div>
+        <div class="stage-label">Scored</div>
+      </div>
+      <div class="stage-arrow">›</div>
+      <div class="pipeline-stage">
+        <div class="stage-count loading" id="p-pending_approval" style="color:var(--red)">—</div>
+        <div class="stage-label">Pendente</div>
+      </div>
+      <div class="stage-arrow">›</div>
+      <div class="pipeline-stage">
+        <div class="stage-count loading" id="p-approved" style="color:var(--green)">—</div>
+        <div class="stage-label">Aprovados</div>
+      </div>
+      <div class="stage-arrow">›</div>
+      <div class="pipeline-stage">
+        <div class="stage-count loading" id="p-outreach" style="color:var(--blue)">—</div>
+        <div class="stage-label">Outreach</div>
+      </div>
+      <div style="width:1px;background:var(--border);margin:0 8px;"></div>
+      <div class="pipeline-stage">
+        <div class="stage-count loading" id="p-descartado" style="color:var(--muted)">—</div>
+        <div class="stage-label">Descartados</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PENDING APPROVALS -->
+  <section>
+    <h2>Aprovações Pendentes <span id="pending-count" style="color:var(--red)"></span></h2>
+    <div class="approval-grid" id="approval-grid">
+      <div class="empty loading">Carregando...</div>
+    </div>
+  </section>
+
+  <!-- ALL LEADS TABLE -->
+  <section>
+    <h2>Todos os Leads</h2>
+    <div class="table-controls">
+      <select id="filter-status" onchange="loadLeads(1)">
+        <option value="">Todos os status</option>
+        <option value="novo">Novo</option>
+        <option value="enriched">Enriquecido</option>
+        <option value="tested">Testado</option>
+        <option value="scored">Scored</option>
+        <option value="pending_approval">Pendente Aprovação</option>
+        <option value="approved">Aprovado</option>
+        <option value="outreach">Outreach</option>
+        <option value="descartado">Descartado</option>
+      </select>
+      <input type="text" id="search-input" placeholder="Buscar por nome..." oninput="debounceSearch()" />
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Nome</th>
+            <th>Cidade / Estado</th>
+            <th>Status</th>
+            <th>Score</th>
+            <th>WhatsApp</th>
+            <th>Google</th>
+            <th>Criado em</th>
+          </tr>
+        </thead>
+        <tbody id="leads-tbody">
+          <tr><td colspan="7" class="empty loading">Carregando...</td></tr>
+        </tbody>
+      </table>
+      <div class="pagination">
+        <div class="pagination-info" id="pagination-info">—</div>
+        <div class="pagination-btns">
+          <button class="page-btn" id="btn-prev" onclick="changePage(-1)" disabled>‹ Anterior</button>
+          <button class="page-btn" id="btn-next" onclick="changePage(1)" disabled>Próxima ›</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+  let currentPage = 1;
+  let totalLeads = 0;
+  const LIMIT = 20;
+  let searchTimer = null;
+
+  // Clock
+  function updateClock() {
+    const now = new Date();
+    document.getElementById('clock').textContent =
+      now.toLocaleTimeString('pt-BR') + ' — ' + now.toLocaleDateString('pt-BR');
+  }
+  setInterval(updateClock, 1000);
+  updateClock();
+
+  // Auto-refresh every 30 seconds
+  setInterval(() => loadAll(), 30000);
+
+  async function loadAll() {
+    await Promise.all([loadStats(), loadPipeline(), loadPending(), loadLeads(currentPage)]);
+  }
+
+  async function loadStats() {
+    try {
+      const data = await fetch('/api/stats').then(r => r.json());
+      document.getElementById('s-prospectados').textContent = data.prospectados ?? 0;
+      document.getElementById('s-enriquecidos').textContent = data.enriquecidos ?? 0;
+      document.getElementById('s-testados').textContent = data.testados ?? 0;
+      document.getElementById('s-aprovados').textContent = data.aprovados ?? 0;
+      document.getElementById('s-enviados').textContent = data.enviados ?? 0;
+      document.getElementById('s-respostas').textContent = data.respostas ?? 0;
+      document.getElementById('s-convertidos').textContent = data.convertidos ?? 0;
+      document.querySelectorAll('.stat-value').forEach(el => el.classList.remove('loading'));
+    } catch (e) {
+      console.error('Erro ao carregar stats', e);
+    }
+  }
+
+  async function loadPipeline() {
+    try {
+      const data = await fetch('/api/pipeline').then(r => r.json());
+      const stages = ['novo', 'enriched', 'tested', 'scored', 'pending_approval', 'approved', 'outreach', 'descartado'];
+      stages.forEach(s => {
+        const el = document.getElementById(`p-${s}`);
+        if (el) { el.textContent = data[s] ?? 0; el.classList.remove('loading'); }
+      });
+    } catch (e) {
+      console.error('Erro ao carregar pipeline', e);
+    }
+  }
+
+  async function loadPending() {
+    try {
+      const data = await fetch('/api/pending').then(r => r.json());
+      const grid = document.getElementById('approval-grid');
+      const countEl = document.getElementById('pending-count');
+
+      countEl.textContent = data.length > 0 ? `(${data.length})` : '';
+
+      if (!data.length) {
+        grid.innerHTML = '<div class="empty">Nenhum lead aguardando aprovação.</div>';
+        return;
+      }
+
+      grid.innerHTML = data.map(({ lead, enrichment, waTest, score }) => {
+        const s = score?.score_total ?? 0;
+        const badgeClass = s >= 70 ? 'hot' : s >= 50 ? 'warm' : 'cold';
+
+        const waDisplay = waTest
+          ? (waTest.respondeu
+              ? `${waTest.tempo_resposta_min < 60
+                  ? waTest.tempo_resposta_min + 'min'
+                  : Math.floor(waTest.tempo_resposta_min / 60) + 'h ' + (waTest.tempo_resposta_min % 60) + 'min'}`
+              : 'Não respondeu')
+          : 'Não testado';
+        const waClass = waTest?.respondeu
+          ? (waTest.tempo_resposta_min < 30 ? 'good' : waTest.tempo_resposta_min < 120 ? 'mid' : 'bad')
+          : 'bad';
+
+        const siteDisplay = enrichment?.tem_site
+          ? `${enrichment.site_score ?? 0}/100`
+          : 'Sem site';
+        const siteClass = enrichment?.tem_site ? (enrichment.site_score >= 60 ? 'good' : 'mid') : 'bad';
+
+        const igDisplay = enrichment?.ig_username
+          ? (enrichment.ig_ativo ? `@${enrichment.ig_username}` : `@${enrichment.ig_username} (inativo)`)
+          : 'Sem Instagram';
+        const igClass = enrichment?.ig_ativo ? 'good' : 'bad';
+
+        const phone = lead.whatsapp || lead.telefone_google || '—';
+        const responseText = waTest?.resposta_texto
+          ? `"${waTest.resposta_texto.substring(0, 120)}${waTest.resposta_texto.length > 120 ? '...' : ''}"`
+          : '';
+
+        return `
+          <div class="approval-card" id="card-${lead.id}">
+            <div class="approval-card-header">
+              <div>
+                <div class="lead-name">${escHtml(lead.nome)}</div>
+                <div class="lead-location">${escHtml(lead.cidade || '')}${lead.cidade && lead.estado ? ' / ' : ''}${escHtml(lead.estado || '')}</div>
+                <div style="color:var(--muted);font-size:11px;margin-top:2px">${escHtml(phone)}</div>
+              </div>
+              <div class="score-badge ${badgeClass}">${s}/100</div>
+            </div>
+            <div class="approval-metrics">
+              <div class="metric">
+                <div class="metric-label">WhatsApp</div>
+                <div class="metric-value ${waClass}">${waDisplay}</div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">Site</div>
+                <div class="metric-value ${siteClass}">${siteDisplay}</div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">Instagram</div>
+                <div class="metric-value ${igClass}">${igDisplay}</div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">Google</div>
+                <div class="metric-value ${lead.google_rating ? 'good' : 'bad'}">${lead.google_rating ? lead.google_rating + '★ (' + lead.google_reviews + ')' : 'Sem avaliações'}</div>
+              </div>
+            </div>
+            ${responseText ? `<div class="wa-response-text">${escHtml(responseText)}</div>` : ''}
+            <div class="approval-actions">
+              <button class="btn btn-approve" onclick="approve('${lead.id}')">✓ Aprovar e Enviar</button>
+              <button class="btn btn-discard" onclick="discard('${lead.id}')">✕ Descartar</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    } catch (e) {
+      console.error('Erro ao carregar pendentes', e);
+    }
+  }
+
+  async function loadLeads(page) {
+    currentPage = page;
+    const status = document.getElementById('filter-status').value;
+    const search = document.getElementById('search-input').value;
+    const tbody = document.getElementById('leads-tbody');
+    tbody.innerHTML = '<tr><td colspan="7" class="empty loading">Carregando...</td></tr>';
+
+    try {
+      const params = new URLSearchParams({ page, limit: LIMIT });
+      if (status) params.set('status', status);
+      if (search) params.set('search', search);
+
+      const data = await fetch(`/api/leads?${params}`).then(r => r.json());
+      totalLeads = data.total;
+
+      updatePagination();
+
+      if (!data.leads.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty">Nenhum lead encontrado.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = data.leads.map(lead => {
+        const date = new Date(lead.criado_em).toLocaleDateString('pt-BR');
+        const wa = lead.whatsapp ? `<span style="color:var(--green)">✓</span>` : `<span style="color:var(--muted)">—</span>`;
+        const google = lead.google_rating
+          ? `${lead.google_rating}★ <span style="color:var(--muted)">(${lead.google_reviews})</span>`
+          : '<span style="color:var(--muted)">—</span>';
+
+        return `
+          <tr>
+            <td style="font-weight:500">${escHtml(lead.nome)}</td>
+            <td style="color:var(--muted)">${escHtml(lead.cidade || '')} ${lead.estado ? `/ ${lead.estado}` : ''}</td>
+            <td><span class="status-pill status-${lead.status}">${lead.status}</span></td>
+            <td style="color:var(--muted)">—</td>
+            <td>${wa}</td>
+            <td>${google}</td>
+            <td style="color:var(--muted)">${date}</td>
+          </tr>
+        `;
+      }).join('');
+    } catch (e) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">Erro ao carregar leads.</td></tr>';
+    }
+  }
+
+  function updatePagination() {
+    const info = document.getElementById('pagination-info');
+    const start = (currentPage - 1) * LIMIT + 1;
+    const end = Math.min(currentPage * LIMIT, totalLeads);
+    info.textContent = `${start}–${end} de ${totalLeads} leads`;
+    document.getElementById('btn-prev').disabled = currentPage <= 1;
+    document.getElementById('btn-next').disabled = end >= totalLeads;
+  }
+
+  function changePage(delta) {
+    loadLeads(currentPage + delta);
+  }
+
+  function debounceSearch() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => loadLeads(1), 400);
+  }
+
+  async function approve(leadId) {
+    const card = document.getElementById(`card-${leadId}`);
+    const btns = card.querySelectorAll('.btn');
+    btns.forEach(b => b.disabled = true);
+    btns[0].textContent = 'Enviando...';
+
+    try {
+      const res = await fetch(`/api/leads/${leadId}/approve`, { method: 'POST' });
+      if (res.ok) {
+        card.style.transition = 'opacity 0.3s';
+        card.style.opacity = '0';
+        setTimeout(() => { card.remove(); loadPipeline(); loadStats(); }, 300);
+      } else {
+        throw new Error('Erro na resposta');
+      }
+    } catch {
+      btns.forEach(b => b.disabled = false);
+      btns[0].textContent = '✓ Aprovar e Enviar';
+      alert('Erro ao aprovar lead. Tente novamente.');
+    }
+  }
+
+  async function discard(leadId) {
+    if (!confirm('Tem certeza que deseja descartar este lead?')) return;
+    const card = document.getElementById(`card-${leadId}`);
+    const btns = card.querySelectorAll('.btn');
+    btns.forEach(b => b.disabled = true);
+
+    try {
+      const res = await fetch(`/api/leads/${leadId}/discard`, { method: 'POST' });
+      if (res.ok) {
+        card.style.transition = 'opacity 0.3s';
+        card.style.opacity = '0';
+        setTimeout(() => { card.remove(); loadPipeline(); }, 300);
+      } else {
+        throw new Error();
+      }
+    } catch {
+      btns.forEach(b => b.disabled = false);
+      alert('Erro ao descartar lead.');
+    }
+  }
+
+  function escHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // Initial load
+  loadAll();
+</script>
+</body>
+</html>

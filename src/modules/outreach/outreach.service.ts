@@ -2,7 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bullmq';
 import { CrmService } from '../crm/crm.service';
-import { TelegramService } from '../telegram/telegram.service';
 import OpenAI from 'openai';
 import axios from 'axios';
 
@@ -17,7 +16,6 @@ export class OutreachService {
   constructor(
     @InjectQueue('followup_queue') private followupQueue: Queue,
     private crmService: CrmService,
-    private telegramService: TelegramService,
   ) {
     this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   }
@@ -33,13 +31,10 @@ export class OutreachService {
     const waTest = await this.crmService.getLatestWaTestByLeadId(leadId);
     const score = await this.crmService.getScoreByLeadId(leadId);
 
-    // Gerar mensagem personalizada com OpenAI
     const mensagem = await this.gerarMensagemPersonalizada(lead, enrichment, waTest, score);
 
-    // Enviar via Evolution API
     await this.sendEvolutionMessage(lead.whatsapp, mensagem);
 
-    // Atualizar outreach
     const outreach = await this.crmService.getOutreachByLeadId(leadId);
     if (outreach) {
       await this.crmService.updateOutreach(outreach.id, {
@@ -47,7 +42,6 @@ export class OutreachService {
       });
     }
 
-    // Agendar follow-ups com delayed jobs
     const DAY_MS = 24 * 60 * 60 * 1000;
 
     await this.followupQueue.add('followup', { leadId, msgNumber: 2 }, {
@@ -67,21 +61,13 @@ export class OutreachService {
 
     await this.crmService.updateLead(leadId, { status: 'outreach' });
     this.logger.log(`Outreach enviado para ${lead.nome}. Follow-ups agendados.`);
-
-    // Notificar Telegram
-    await this.telegramService.sendMessage(
-      `📤 Mensagem enviada para *${lead.nome}* (${lead.cidade}/${lead.estado})`
-    );
   }
 
   async handleResponse(leadId: string, responseText: string) {
-    const lead = await this.crmService.getLeadById(leadId);
     const outreach = await this.crmService.getOutreachByLeadId(leadId);
-
     if (!outreach) return;
 
-    // Determinar nível de interesse via Ollama ou heurística
-    const interesse = this.avaliarInteresse(responseText);
+    const interesse = await this.avaliarInteresse(responseText);
 
     await this.crmService.updateOutreach(outreach.id, {
       respondeu: true,
@@ -89,15 +75,10 @@ export class OutreachService {
       interesse_nivel: interesse,
     });
 
-    await this.telegramService.sendMessage(
-      `💬 *${lead?.nome}* respondeu!\n` +
-      `Interesse: ${interesse.toUpperCase()}\n` +
-      `Mensagem: "${responseText.substring(0, 200)}"`
-    );
+    this.logger.log(`Resposta de lead ${leadId} — interesse: ${interesse.toUpperCase()}`);
   }
 
   private async gerarMensagemPersonalizada(lead: any, enrichment: any, waTest: any, score: any): Promise<string> {
-    // Montar contexto do lead para o prompt
     const problemasEncontrados = [];
 
     if (waTest && !waTest.respondeu) {
@@ -158,13 +139,12 @@ Retorne APENAS a mensagem, sem explicações.`;
 
     if (!lead || !outreach) return;
 
-    // Não enviar se já respondeu
     if (outreach.respondeu) {
       this.logger.log(`Lead ${lead.nome} já respondeu, cancelando follow-up ${msgNumber}`);
       return;
     }
 
-    const nome = lead.nome.split(' ')[0]; // Primeiro nome
+    const nome = lead.nome.split(' ')[0];
     let mensagem = '';
 
     if (msgNumber === 2) {
@@ -198,11 +178,31 @@ Retorne APENAS a mensagem, sem explicações.`;
     );
   }
 
-  private avaliarInteresse(text: string): 'alto' | 'medio' | 'baixo' {
+  private async avaliarInteresse(text: string): Promise<'alto' | 'medio' | 'baixo'> {
+    try {
+      const response = await this.openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [{
+          role: 'user',
+          content: `Classifique o nível de interesse desta resposta de um potencial cliente a uma proposta de vendas. Responda APENAS com uma das palavras: alto, medio, baixo. Mensagem: "${text.substring(0, 300)}"`,
+        }],
+        max_tokens: 10,
+        temperature: 0,
+      });
+      const result = response.choices[0].message.content?.trim().toLowerCase() || 'medio';
+      if (['alto', 'medio', 'baixo'].includes(result)) {
+        return result as 'alto' | 'medio' | 'baixo';
+      }
+      return 'medio';
+    } catch {
+      return this.avaliarInteresseFallback(text);
+    }
+  }
+
+  private avaliarInteresseFallback(text: string): 'alto' | 'medio' | 'baixo' {
     const t = text.toLowerCase();
     const alto = ['sim', 'quero', 'interessei', 'manda', 'como funciona', 'quanto custa', 'agendar', 'testar'];
     const baixo = ['não', 'nao', 'obrigado mas', 'ja temos', 'não preciso', 'remove'];
-
     if (alto.some(w => t.includes(w))) return 'alto';
     if (baixo.some(w => t.includes(w))) return 'baixo';
     return 'medio';

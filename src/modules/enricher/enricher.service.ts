@@ -155,7 +155,7 @@ asyncio.run(crawl(sys.argv[1]))
           const data = JSON.parse(output.trim());
           const markdown = data.markdown || '';
 
-          // Usar Ollama para analisar o site
+          // Usar OpenAI para analisar o site
           let score = 0;
           let resumo = 'Site não analisado';
 

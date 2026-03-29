@@ -60,6 +60,36 @@ export class CrmService implements OnModuleInit {
     return data || [];
   }
 
+  async getLeadsFiltered(
+    filters: { status?: string; search?: string },
+    page = 1,
+    limit = 20,
+  ): Promise<Lead[]> {
+    let query = this.supabase
+      .from('leads')
+      .select('*')
+      .order('criado_em', { ascending: false })
+      .range((page - 1) * limit, page * limit - 1);
+
+    if (filters.status) query = query.eq('status', filters.status);
+    if (filters.search) query = query.ilike('nome', `%${filters.search}%`);
+
+    const { data } = await query;
+    return data || [];
+  }
+
+  async countLeads(filters: { status?: string; search?: string }): Promise<number> {
+    let query = this.supabase
+      .from('leads')
+      .select('*', { count: 'exact', head: true });
+
+    if (filters.status) query = query.eq('status', filters.status);
+    if (filters.search) query = query.ilike('nome', `%${filters.search}%`);
+
+    const { count } = await query;
+    return count || 0;
+  }
+
   // ─── ENRICHMENT ──────────────────────────────────────────────
 
   async saveEnrichment(data: Partial<Enrichment>): Promise<Enrichment | null> {
