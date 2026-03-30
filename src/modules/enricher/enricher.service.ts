@@ -152,7 +152,12 @@ asyncio.run(crawl(sys.argv[1]))
       proc.stdout.on('data', d => output += d.toString());
       proc.on('close', async () => {
         try {
-          const data = JSON.parse(output.trim());
+          // crawl4ai prints progress lines to stdout — find last valid JSON line
+          const lines = output.trim().split('\n').reverse();
+          let data: any = { markdown: '', whatsapp: null };
+          for (const line of lines) {
+            try { data = JSON.parse(line); break; } catch {}
+          }
           const markdown = data.markdown || '';
 
           // Usar OpenAI para analisar o site

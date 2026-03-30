@@ -109,10 +109,11 @@ export class ScorerService {
     const reviews = lead.google_reviews || 0;
     const rating = lead.google_rating || 0;
 
-    if (reviews === 0) return 0;
-    if (reviews < 10) return 30;
+    if (rating === 0) return 0;
+    if (reviews === 0) return rating >= 4.5 ? 30 : 15; // has rating but no review count
+    if (reviews < 10) return 40;
     if (reviews < 50) return 60;
-    if (rating > 4) return 100;
+    if (rating >= 4) return 100;
     return 60;
   }
 }

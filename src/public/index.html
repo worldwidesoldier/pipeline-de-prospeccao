@@ -289,6 +289,120 @@
     }
     .dot.green { background: var(--green); }
     .dot.red { background: var(--red); }
+
+    /* ── WHATSAPP STATUS ── */
+    .wa-section { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+    .wa-status-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 20px; flex: 1; min-width: 220px;
+    }
+    .wa-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 13px; font-weight: 600; padding: 4px 10px;
+      border-radius: 20px; margin-bottom: 12px;
+    }
+    .wa-badge.connected { background: rgba(34,197,94,0.15); color: var(--green); }
+    .wa-badge.disconnected { background: rgba(239,68,68,0.15); color: var(--red); }
+    .wa-badge::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+    .wa-number { font-size: 13px; color: var(--muted); margin-bottom: 16px; }
+    .wa-btn {
+      background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+      padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px;
+      transition: background 0.15s; width: 100%;
+    }
+    .wa-btn:hover { background: var(--border); }
+    .wa-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .wa-qr-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 20px; display: none;
+      flex-direction: column; align-items: center; gap: 12px;
+    }
+    .wa-qr-card.show { display: flex; }
+    .wa-qr-card img { width: 200px; height: 200px; border-radius: 8px; background: white; padding: 8px; }
+    .wa-qr-hint { font-size: 12px; color: var(--muted); text-align: center; max-width: 200px; }
+    .wa-qr-timer { font-size: 11px; color: var(--yellow); }
+
+    /* ── NOVA CAMPANHA ── */
+    .campaign-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+    }
+    .campaign-input-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .campaign-input {
+      flex: 1;
+      min-width: 280px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+    }
+    .campaign-input:focus { border-color: var(--blue); }
+    .campaign-select {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      outline: none;
+      cursor: pointer;
+    }
+    .campaign-btn {
+      background: var(--blue);
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+      white-space: nowrap;
+    }
+    .campaign-btn:hover { opacity: 0.85; }
+    .campaign-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .campaign-hint {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 16px;
+    }
+    .jobs-list { display: flex; flex-direction: column; gap: 8px; }
+    .job-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .job-query { font-size: 13px; font-weight: 500; flex: 1; min-width: 200px; }
+    .job-meta { font-size: 12px; color: var(--muted); }
+    .job-status {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .job-status.running { background: rgba(234,179,8,0.15); color: var(--yellow); }
+    .job-status.done { background: rgba(34,197,94,0.15); color: var(--green); }
+    .job-status.error { background: rgba(239,68,68,0.15); color: var(--red); }
+    .job-spinner { animation: spin 1s linear infinite; display: inline-block; }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -302,6 +416,53 @@
 </header>
 
 <main>
+
+  <!-- NOVA CAMPANHA -->
+  <section>
+    <h2>Nova Campanha</h2>
+    <div class="campaign-box">
+      <div class="campaign-input-row">
+        <input 
+          type="text" 
+          id="campaign-query" 
+          class="campaign-input" 
+          placeholder="Ex: casa de câmbio São Paulo · ou cole um link do Google Maps"
+          onkeydown="if(event.key==='Enter') triggerScrape()"
+        />
+        <select id="campaign-max" class="campaign-select">
+          <option value="20">20 leads</option>
+          <option value="30" selected>30 leads</option>
+          <option value="50">50 leads</option>
+          <option value="80">80 leads</option>
+        </select>
+        <button class="campaign-btn" id="campaign-btn" onclick="triggerScrape()">
+          &#9654; Disparar
+        </button>
+      </div>
+      <div class="campaign-hint">
+        Cole uma busca do Google Maps ou escreva a query diretamente. O pipeline roda completo: Maps → Site → Instagram → WA Tester → Score → Aprovação.
+      </div>
+      <div id="jobs-list"></div>
+    </div>
+  </section>
+
+  <!-- WHATSAPP STATUS -->
+  <section>
+    <h2>WhatsApp</h2>
+    <div class="wa-section">
+      <div class="wa-status-card">
+        <div id="wa-badge" class="wa-badge disconnected">Verificando...</div>
+        <div id="wa-number" class="wa-number">—</div>
+        <button class="wa-btn" id="wa-btn" onclick="reconnectWa()">⟳ Reconectar / Gerar QR</button>
+      </div>
+      <div class="wa-qr-card" id="wa-qr-card">
+        <div style="font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.06em">Escaneie com o WhatsApp</div>
+        <img id="wa-qr-img" src="" alt="QR Code" />
+        <div class="wa-qr-hint">Abra o WhatsApp → Aparelhos conectados → Conectar aparelho</div>
+        <div class="wa-qr-timer" id="wa-qr-timer"></div>
+      </div>
+    </div>
+  </section>
 
   <!-- TODAY'S STATS -->
   <section>
@@ -664,8 +825,156 @@
     return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
+
+  let waQrInterval = null;
+  let waQrCountdown = 0;
+
+  async function loadWaStatus() {
+    try {
+      const d = await fetch("/api/whatsapp/status").then(r => r.json());
+      const badge = document.getElementById("wa-badge");
+      const num = document.getElementById("wa-number");
+      if (d.connected) {
+        badge.className = "wa-badge connected";
+        badge.textContent = "Conectado";
+        num.textContent = d.number ? "+" + d.number : "Número conectado";
+        stopQrPolling();
+        document.getElementById("wa-qr-card").classList.remove("show");
+      } else {
+        badge.className = "wa-badge disconnected";
+        badge.textContent = "Desconectado";
+        num.textContent = "Nenhum número vinculado";
+      }
+    } catch {}
+  }
+
+  async function reconnectWa() {
+    const btn = document.getElementById("wa-btn");
+    btn.disabled = true;
+    btn.textContent = "Aguardando QR...";
+    try {
+      await fetch("/api/whatsapp/reconnect", { method: "POST" });
+    } catch {}
+    startQrPolling();
+  }
+
+  function startQrPolling() {
+    stopQrPolling();
+    pollQr();
+    waQrInterval = setInterval(pollQr, 5000);
+  }
+
+  function stopQrPolling() {
+    if (waQrInterval) { clearInterval(waQrInterval); waQrInterval = null; }
+    const btn = document.getElementById("wa-btn");
+    btn.disabled = false;
+    btn.textContent = "⟳ Reconectar / Gerar QR";
+  }
+
+  async function pollQr() {
+    try {
+      const d = await fetch("/api/whatsapp/qr").then(r => r.json());
+      if (d.qr) {
+        const card = document.getElementById("wa-qr-card");
+        document.getElementById("wa-qr-img").src = d.qr;
+        card.classList.add("show");
+        waQrCountdown = 60;
+        const timer = document.getElementById("wa-qr-timer");
+        const countdown = setInterval(() => {
+          waQrCountdown--;
+          timer.textContent = `QR expira em ${waQrCountdown}s`;
+          if (waQrCountdown <= 0) clearInterval(countdown);
+        }, 1000);
+      }
+      // Check if connected
+      await loadWaStatus();
+    } catch {}
+  }
+
+  // Auto-check WA status every 30s
+  setInterval(loadWaStatus, 30000);
+
+  let jobPollInterval = null;
+
+  async function triggerScrape() {
+    const query = document.getElementById('campaign-query').value.trim();
+    const max = parseInt(document.getElementById('campaign-max').value);
+    if (!query) { document.getElementById('campaign-query').focus(); return; }
+    
+    const btn = document.getElementById('campaign-btn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Iniciando...';
+    
+    try {
+      const res = await fetch('/api/scraper/trigger', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, max }),
+      });
+      const job = await res.json();
+      if (job.error) { alert('Erro: ' + job.error); return; }
+      
+      document.getElementById('campaign-query').value = '';
+      btn.textContent = '▶ Disparar';
+      btn.disabled = false;
+      
+      loadJobs();
+      if (!jobPollInterval) {
+        jobPollInterval = setInterval(() => {
+          loadJobs();
+          loadStats();
+          loadPipeline();
+        }, 5000);
+      }
+    } catch (e) {
+      alert('Erro ao disparar scrape.');
+    } finally {
+      btn.textContent = '▶ Disparar';
+      btn.disabled = false;
+    }
+  }
+
+  async function loadJobs() {
+    try {
+      const jobs = await fetch('/api/scraper/jobs').then(r => r.json());
+      const container = document.getElementById('jobs-list');
+      
+      // Stop polling if no running jobs
+      const hasRunning = jobs.some(j => j.status === 'running');
+      if (!hasRunning && jobPollInterval) {
+        clearInterval(jobPollInterval);
+        jobPollInterval = null;
+      }
+      
+      if (!jobs.length) { container.innerHTML = ''; return; }
+      
+      container.innerHTML = '<div class="jobs-list">' + jobs.map(job => {
+        const elapsed = job.finished_at 
+          ? Math.round((new Date(job.finished_at) - new Date(job.started_at)) / 1000) + 's'
+          : Math.round((Date.now() - new Date(job.started_at)) / 1000) + 's';
+        
+        const statusLabel = job.status === 'running' 
+          ? '<span class="job-spinner">⟳</span> Rodando'
+          : job.status === 'done' ? '✓ Concluído' : '✗ Erro';
+        
+        const meta = job.status === 'done'
+          ? `${job.leads_found} encontrados · ${job.leads_new} novos · ${elapsed}`
+          : job.status === 'running'
+          ? `${elapsed} decorridos...`
+          : job.error || 'Falhou';
+        
+        return `<div class="job-card">
+          <div class="job-query">${escHtml(job.query)}</div>
+          <div class="job-meta">${escHtml(meta)}</div>
+          <span class="job-status ${job.status}">${statusLabel}</span>
+        </div>`;
+      }).join('') + '</div>';
+    } catch {}
+  }
+
   // Initial load
   loadAll();
+  loadWaStatus();
 </script>
 </body>
 </html>
