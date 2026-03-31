@@ -8,6 +8,7 @@ import { ScraperModule } from '../scraper/scraper.module';
 @Module({
   imports: [
     BullModule.registerQueue({ name: 'outreach_queue' }),
+    BullModule.registerQueue({ name: 'enrichment_queue' }),
     CrmModule,
     ScraperModule,
   ],

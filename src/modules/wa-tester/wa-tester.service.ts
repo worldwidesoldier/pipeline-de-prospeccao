@@ -4,6 +4,53 @@ import { Queue } from 'bullmq';
 import { CrmService } from '../crm/crm.service';
 import axios from 'axios';
 import OpenAI from 'openai';
+import * as fs from 'fs';
+import * as path from 'path';
+import { randomUUID } from 'crypto';
+
+// ── Template store (persisted to disk) ──────────────────────────
+export interface WaTemplate { id: string; nome: string; texto: string; criado_em: string; }
+
+const TEMPLATES_FILE = path.join(process.cwd(), 'data', 'templates.json');
+
+export class TemplateStore {
+  private static load(): WaTemplate[] {
+    try {
+      fs.mkdirSync(path.dirname(TEMPLATES_FILE), { recursive: true });
+      return JSON.parse(fs.readFileSync(TEMPLATES_FILE, 'utf8'));
+    } catch { return []; }
+  }
+  private static save(list: WaTemplate[]) {
+    fs.mkdirSync(path.dirname(TEMPLATES_FILE), { recursive: true });
+    fs.writeFileSync(TEMPLATES_FILE, JSON.stringify(list, null, 2));
+  }
+  static list(): WaTemplate[] { return this.load(); }
+  static get(id: string): string | null {
+    return this.load().find(t => t.id === id)?.texto ?? null;
+  }
+  static create(nome: string, texto: string): WaTemplate {
+    const list = this.load();
+    const t: WaTemplate = { id: randomUUID(), nome, texto, criado_em: new Date().toISOString() };
+    list.push(t);
+    this.save(list);
+    return t;
+  }
+  static delete(id: string): boolean {
+    const list = this.load();
+    const next = list.filter(t => t.id !== id);
+    if (next.length === list.length) return false;
+    this.save(next);
+    return true;
+  }
+  static update(id: string, nome: string, texto: string): WaTemplate | null {
+    const list = this.load();
+    const t = list.find(t => t.id === id);
+    if (!t) return null;
+    t.nome = nome; t.texto = texto;
+    this.save(list);
+    return t;
+  }
+}
 
 @Injectable()
 export class WaTesterService {
@@ -21,7 +68,14 @@ export class WaTesterService {
     private crmService: CrmService,
   ) {}
 
-  async sendTestMessage(leadId: string) {
+  private isBusinessHours(): boolean {
+    const now = new Date();
+    const hour = now.getHours();
+    const day = now.getDay(); // 0=Sun, 6=Sat
+    return day >= 1 && day <= 5 && hour >= 8 && hour < 22;
+  }
+
+  async sendTestMessage(leadId: string, templateId?: string) {
     const lead = await this.crmService.getLeadById(leadId);
     if (!lead || !lead.whatsapp) {
       this.logger.warn(`Lead ${leadId} sem WhatsApp, pulando teste`);
@@ -29,7 +83,20 @@ export class WaTesterService {
       return;
     }
 
-    const mensagem = await this.gerarMensagemTeste();
+    if (!this.isBusinessHours()) {
+      this.logger.log(`Fora do horário comercial — reagendando lead ${lead.nome} para amanhã 8h`);
+      const now = new Date();
+      const next = new Date(now);
+      next.setDate(now.getDate() + (now.getDay() === 5 ? 3 : now.getDay() === 6 ? 2 : 1));
+      next.setHours(8, 0, 0, 0);
+      const delay = next.getTime() - now.getTime();
+      await this.scoringQueue.add('score_lead', { leadId }, { delay });
+      return;
+    }
+
+    const mensagem = templateId
+      ? (TemplateStore.get(templateId) ?? await this.gerarMensagemTeste())
+      : await this.gerarMensagemTeste();
     const numero = this.formatNumber(lead.whatsapp);
 
     this.logger.log(`Enviando teste para ${lead.nome} (${numero})`);

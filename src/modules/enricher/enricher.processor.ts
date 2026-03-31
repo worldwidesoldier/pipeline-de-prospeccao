@@ -10,9 +10,9 @@ export class EnricherProcessor {
   constructor(private enricherService: EnricherService) {}
 
   @Process('enrich_lead')
-  async handleEnrichLead(job: Job<{ leadId: string }>) {
+  async handleEnrichLead(job: Job<{ leadId: string; templateId?: string }>) {
     this.logger.log(`Enriquecendo lead ${job.data.leadId}...`);
-    await this.enricherService.enrichLead(job.data.leadId);
+    await this.enricherService.enrichLead(job.data.leadId, job.data.templateId);
     return { ok: true };
   }
 }

@@ -47,7 +47,7 @@ export class ScraperService {
     return this.jobs.get(id);
   }
 
-  async triggerManualScrape(query: string, max = 30): Promise<ScrapeJob> {
+  async triggerManualScrape(query: string, max = 30, templateId?: string): Promise<ScrapeJob> {
     const job: ScrapeJob = {
       id: randomUUID(),
       query,
@@ -59,7 +59,7 @@ export class ScraperService {
     this.jobs.set(job.id, job);
 
     // Run async — don't await
-    this.runScrapeJob(job, query, max).catch(err => {
+    this.runScrapeJob(job, query, max, templateId).catch(err => {
       job.status = 'error';
       job.error = err.message;
       job.finished_at = new Date().toISOString();
@@ -69,7 +69,7 @@ export class ScraperService {
     return job;
   }
 
-  private async runScrapeJob(job: ScrapeJob, query: string, max: number) {
+  private async runScrapeJob(job: ScrapeJob, query: string, max: number, templateId?: string) {
     try {
       this.logger.log(`Job ${job.id}: scraping "${query}" max=${max}`);
       const leads = await this.runScraper(query, max);
@@ -78,7 +78,7 @@ export class ScraperService {
       let newCount = 0;
       for (const lead of leads) {
         const exists = lead.nome
-          ? await this.crmService.leadExists(lead.nome, lead.estado || '')
+          ? await this.crmService.leadExists(lead.nome, lead.estado || '', lead.telefone_google)
           : false;
         if (exists) continue;
 
@@ -86,7 +86,7 @@ export class ScraperService {
         if (saved) {
           await this.enrichmentQueue.add(
             'enrich_lead',
-            { leadId: saved.id },
+            { leadId: saved.id, templateId },
             { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
           );
           newCount++;

@@ -10,9 +10,9 @@ export class WaTesterProcessor {
   constructor(private waTesterService: WaTesterService) {}
 
   @Process('test_whatsapp')
-  async handleTestWhatsApp(job: Job<{ leadId: string }>) {
+  async handleTestWhatsApp(job: Job<{ leadId: string; templateId?: string }>) {
     this.logger.log(`Testando WA do lead ${job.data.leadId}`);
-    await this.waTesterService.sendTestMessage(job.data.leadId);
+    await this.waTesterService.sendTestMessage(job.data.leadId, job.data.templateId);
     return { ok: true };
   }
 }

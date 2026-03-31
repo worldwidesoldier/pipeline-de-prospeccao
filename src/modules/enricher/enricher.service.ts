@@ -17,7 +17,7 @@ export class EnricherService {
     private crmService: CrmService,
   ) {}
 
-  async enrichLead(leadId: string) {
+  async enrichLead(leadId: string, templateId?: string) {
     const lead = await this.crmService.getLeadById(leadId);
     if (!lead) {
       this.logger.warn(`Lead ${leadId} não encontrado`);
@@ -41,6 +41,8 @@ export class EnricherService {
     let whatsapp: string | null = null;
     let whatsappSource: string = 'unknown';
 
+    let igUsernameFromSite: string | null = null;
+
     // 1. Enriquecer site se existir
     if (lead.site) {
       try {
@@ -53,15 +55,20 @@ export class EnricherService {
           whatsapp = siteData.whatsapp;
           whatsappSource = 'site';
         }
+        if (siteData.instagramUsername) {
+          igUsernameFromSite = siteData.instagramUsername;
+          this.logger.log(`Instagram encontrado no site: @${igUsernameFromSite}`);
+        }
       } catch (e) {
         this.logger.warn(`Erro ao crawlar site ${lead.site}: ${e.message}`);
       }
     }
 
-    // 2. Enriquecer Instagram se existir
-    if (lead.instagram) {
+    // 2. Enriquecer Instagram — usar do site se não veio do scraper
+    const igSource = lead.instagram || (igUsernameFromSite ? `https://instagram.com/${igUsernameFromSite}` : null);
+    if (igSource) {
       try {
-        const igUsername = this.extractInstagramUsername(lead.instagram);
+        const igUsername = this.extractInstagramUsername(igSource);
         if (igUsername) {
           const igData = await this.getInstagramData(igUsername);
           enrichmentData.ig_username = igData.username;
@@ -104,7 +111,7 @@ export class EnricherService {
 
     // 6. Rotear para próxima fila
     if (whatsapp && whatsappSource !== 'unknown') {
-      await this.waTestQueue.add('test_whatsapp', { leadId }, {
+      await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, {
         attempts: 2,
         backoff: { type: 'fixed', delay: 30000 },
       });
@@ -118,7 +125,7 @@ export class EnricherService {
     }
   }
 
-  private async crawlSite(url: string): Promise<{ score: number; resumo: string; whatsapp: string | null }> {
+  private async crawlSite(url: string): Promise<{ score: number; resumo: string; whatsapp: string | null; instagramUsername: string | null }> {
     // Usar Crawl4AI via subprocess Python
     return new Promise((resolve) => {
       const script = `
@@ -128,21 +135,85 @@ import json
 import re
 from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
 
+def extract_wa(md):
+    # 1. wa.me/NUMBER (most reliable)
+    m = re.search(r'wa\\.me/([0-9]{10,14})', md, re.IGNORECASE)
+    if m: return m.group(1)
+    # 2. whatsapp.com/send?phone=NUMBER or api.whatsapp.com/send?phone=NUMBER
+    m = re.search(r'whatsapp\\.com/send[?&]phone=([0-9]{10,14})', md, re.IGNORECASE)
+    if m: return m.group(1)
+    # 3. api.whatsapp.com/send?phone=NUMBER
+    m = re.search(r'api\\.whatsapp\\.com/send[?&]phone=([0-9]{10,14})', md, re.IGNORECASE)
+    if m: return m.group(1)
+    # 4. keyword context: whatsapp/zap/wpp near number
+    m = re.search(r'(?:whatsapp|\\bwpp\\b|\\bzap\\b)[^0-9+]{0,30}(\\+?[0-9]{2}[\\s.-]?[0-9]{2}[\\s.-]?9[0-9]{4}[\\s.-]?[0-9]{4})', md, re.IGNORECASE)
+    if m: return m.group(1)
+    # 5. Brazilian mobile number with 55 country code
+    m = re.search(r'(\\+?55[\\s.-]?[0-9]{2}[\\s.-]?9[0-9]{4}[\\s.-]?[0-9]{4})', md)
+    if m: return m.group(1)
+    return None
+
+def extract_ig(md):
+    ig = re.search(r'instagram\\.com/([^/?\\s"\'\\)\\]<>]+)', md, re.IGNORECASE)
+    username = ig.group(1).rstrip('/') if ig else None
+    if username in ('p', 'reel', 'reels', 'explore', 'accounts', 'stories', 'tv', 'share', 'about', 'blog', 'help'):
+        return None
+    return username
+
+def extract_links(html, base_url):
+    """Extract internal links that look like contact/unit pages."""
+    from urllib.parse import urljoin, urlparse
+    base = urlparse(base_url)
+    links = re.findall(r'href=["\\']((?:https?://[^"\\' >]+|/[^"\\' >]*))["\\'\\s]', html or '', re.IGNORECASE)
+    candidates = []
+    for l in links:
+        full = urljoin(base_url, l)
+        p = urlparse(full)
+        if p.netloc != base.netloc:
+            continue
+        path = p.path.lower()
+        # Prioritize contact/unit pages
+        score = 0
+        for kw in ('contato', 'contact', 'unidade', 'loja', 'whatsapp', 'fale', 'atend', 'onde', 'endereco'):
+            if kw in path:
+                score += 2
+        if score > 0:
+            candidates.append((score, full))
+    candidates.sort(key=lambda x: -x[0])
+    return [c[1] for c in candidates[:3]]
+
 async def crawl(url):
-    config = CrawlerRunConfig(word_count_threshold=10, delay_before_return_html=2.0)
+    config = CrawlerRunConfig(word_count_threshold=5, delay_before_return_html=2.0)
     async with AsyncWebCrawler() as crawler:
         result = await crawler.arun(url=url, config=config)
-        if result.success:
-            md = result.markdown or ""
-            # Busca WhatsApp
-            wa = re.search(r'(?:wa\\.me/|whatsapp|zap)[^0-9+]*(\\+?[0-9]{10,14})', md, re.IGNORECASE)
-            phone = re.search(r'(\\+?55\\s?[0-9]{2}\\s?9[0-9]{4}[- ]?[0-9]{4})', md)
-            print(json.dumps({
-                "markdown": md[:3000],
-                "whatsapp": re.sub(r'[^\\d+]', '', wa.group(1)) if wa else (re.sub(r'[^\\d+]', '', phone.group(1)) if phone else None)
-            }))
-        else:
-            print(json.dumps({"markdown": "", "whatsapp": None}))
+        md = (result.markdown or "") if result.success else ""
+        html = (result.html or "") if result.success else ""
+
+        wa_raw = extract_wa(md)
+        ig_username = extract_ig(md)
+
+        # If homepage is sparse (< 400 chars), try subpages
+        if len(md.strip()) < 400 and result.success:
+            sublinks = extract_links(html, url)
+            for sub in sublinks:
+                if sub == url:
+                    continue
+                sub_result = await crawler.arun(url=sub, config=config)
+                if sub_result.success:
+                    sub_md = sub_result.markdown or ""
+                    if not wa_raw:
+                        wa_raw = extract_wa(sub_md)
+                    if not ig_username:
+                        ig_username = extract_ig(sub_md)
+                    md += "\\n" + sub_md[:1000]
+                if wa_raw:
+                    break
+
+        print(json.dumps({
+            "markdown": md[:3000],
+            "whatsapp": re.sub(r'[^\\d+]', '', wa_raw) if wa_raw else None,
+            "instagram_username": ig_username,
+        }))
 
 asyncio.run(crawl(sys.argv[1]))
 `;
@@ -183,12 +254,12 @@ asyncio.run(crawl(sys.argv[1]))
             }
           }
 
-          resolve({ score, resumo, whatsapp: data.whatsapp });
+          resolve({ score, resumo, whatsapp: data.whatsapp, instagramUsername: data.instagram_username || null });
         } catch {
-          resolve({ score: 0, resumo: 'Erro ao analisar site', whatsapp: null });
+          resolve({ score: 0, resumo: 'Erro ao analisar site', whatsapp: null, instagramUsername: null });
         }
       });
-      proc.on('error', () => resolve({ score: 0, resumo: 'Erro ao acessar site', whatsapp: null }));
+      proc.on('error', () => resolve({ score: 0, resumo: 'Erro ao acessar site', whatsapp: null, instagramUsername: null }));
     });
   }
 

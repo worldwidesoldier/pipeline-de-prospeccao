@@ -42,11 +42,23 @@ export class CrmService implements OnModuleInit {
     if (error) this.logger.error(`Erro ao atualizar lead ${id}:`, error.message);
   }
 
-  async leadExists(nome: string, estado: string): Promise<boolean> {
+  async leadExists(nome: string, estado: string, telefone?: string): Promise<boolean> {
+    // Match by phone first (most reliable) — same number = same business
+    if (telefone) {
+      const cleanPhone = telefone.replace(/[^\d]/g, '');
+      if (cleanPhone.length >= 8) {
+        const { count } = await this.supabase
+          .from('leads')
+          .select('*', { count: 'exact', head: true })
+          .like('telefone_google', `%${cleanPhone.slice(-8)}`);
+        if ((count || 0) > 0) return true;
+      }
+    }
+    // Fallback: normalize name (lowercase, trim) + state
     const { count } = await this.supabase
       .from('leads')
       .select('*', { count: 'exact', head: true })
-      .ilike('nome', nome)
+      .ilike('nome', nome.trim())
       .eq('estado', estado);
     return (count || 0) > 0;
   }
@@ -67,7 +79,7 @@ export class CrmService implements OnModuleInit {
   ): Promise<Lead[]> {
     let query = this.supabase
       .from('leads')
-      .select('*')
+      .select('*, scores(score_total)')
       .order('criado_em', { ascending: false })
       .range((page - 1) * limit, page * limit - 1);
 
@@ -75,7 +87,12 @@ export class CrmService implements OnModuleInit {
     if (filters.search) query = query.ilike('nome', `%${filters.search}%`);
 
     const { data } = await query;
-    return data || [];
+    // Flatten scores relation into score_total field
+    return (data || []).map((l: any) => ({
+      ...l,
+      score_total: l.scores?.[0]?.score_total ?? null,
+      scores: undefined,
+    }));
   }
 
   async countLeads(filters: { status?: string; search?: string }): Promise<number> {
@@ -93,13 +110,22 @@ export class CrmService implements OnModuleInit {
   // ─── ENRICHMENT ──────────────────────────────────────────────
 
   async saveEnrichment(data: Partial<Enrichment>): Promise<Enrichment | null> {
-    const { data: result, error } = await this.supabase
+    // Try update first; if no row exists, insert
+    const { data: updated, error: updateError } = await this.supabase
       .from('enrichment')
-      .upsert(data, { onConflict: 'lead_id' })
+      .update(data)
+      .eq('lead_id', data.lead_id)
       .select()
       .single();
-    if (error) { this.logger.error('Erro ao salvar enrichment:', error.message); return null; }
-    return result;
+    if (!updateError && updated) return updated;
+
+    const { data: inserted, error: insertError } = await this.supabase
+      .from('enrichment')
+      .insert(data)
+      .select()
+      .single();
+    if (insertError) { this.logger.error('Erro ao salvar enrichment:', insertError.message); return null; }
+    return inserted;
   }
 
   async getEnrichmentByLeadId(leadId: string): Promise<Enrichment | null> {

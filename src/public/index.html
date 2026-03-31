@@ -6,536 +6,289 @@
   <title>Fair Assist — Pipeline</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --bg: #0f1117;
-      --surface: #1a1d27;
-      --surface2: #22263a;
-      --border: #2e3248;
-      --text: #e2e8f0;
-      --muted: #8892a4;
-      --green: #22c55e;
-      --yellow: #eab308;
-      --red: #ef4444;
-      --blue: #3b82f6;
-      --purple: #a855f7;
-      --orange: #f97316;
+      --bg: #0f1117; --surface: #1a1d27; --surface2: #22263a; --border: #2e3248;
+      --text: #e2e8f0; --muted: #8892a4;
+      --green: #22c55e; --yellow: #eab308; --red: #ef4444;
+      --blue: #3b82f6; --purple: #a855f7; --orange: #f97316;
     }
+    body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.5; min-height: 100vh; }
 
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      font-size: 14px;
-      line-height: 1.5;
-      min-height: 100vh;
-    }
-
-    /* ── HEADER ── */
-    header {
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      padding: 0 24px;
-      height: 56px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      position: sticky;
-      top: 0;
-      z-index: 10;
-    }
-    .logo { font-weight: 700; font-size: 16px; letter-spacing: -0.3px; }
+    /* HEADER */
+    header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 24px; height: 52px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+    .logo { font-weight: 700; font-size: 15px; letter-spacing: -0.3px; }
     .logo span { color: var(--blue); }
-    .header-right { display: flex; align-items: center; gap: 16px; }
-    #clock { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
-    .refresh-btn {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 6px 12px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 13px;
-      transition: background 0.15s;
-    }
-    .refresh-btn:hover { background: var(--border); }
+    .header-right { display: flex; align-items: center; gap: 12px; }
+    #clock { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 
-    /* ── LAYOUT ── */
+    /* WA STATUS BUTTON */
+    .wa-header-btn { display: flex; align-items: center; gap: 6px; background: var(--surface2); border: 1px solid var(--border); border-radius: 20px; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer; transition: border-color 0.15s; }
+    .wa-header-btn:hover { border-color: var(--blue); }
+    .wa-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .wa-dot.on { background: var(--green); }
+    .wa-dot.off { background: var(--red); animation: blink 1.5s ease-in-out infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.4} }
+    #wa-label.on { color: var(--green); }
+    #wa-label.off { color: var(--red); }
+
+    /* WA PANEL */
+    .wa-panel { position: fixed; top: 58px; right: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; width: 270px; z-index: 200; box-shadow: 0 8px 32px rgba(0,0,0,.5); display: none; flex-direction: column; gap: 12px; }
+    .wa-panel.open { display: flex; }
+    .wa-panel-title { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+    #wa-panel-number { font-size: 13px; }
+    .wa-action-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 7px; cursor: pointer; font-size: 13px; width: 100%; transition: background .15s; }
+    .wa-action-btn:hover { background: var(--border); }
+    .wa-action-btn:disabled { opacity: .5; cursor: not-allowed; }
+    .qr-wrap { display: none; flex-direction: column; align-items: center; gap: 8px; }
+    .qr-wrap.show { display: flex; }
+    .qr-wrap img { width: 180px; height: 180px; background: white; padding: 8px; border-radius: 8px; }
+    .qr-hint { font-size: 11px; color: var(--muted); text-align: center; }
+    #qr-timer { font-size: 11px; color: var(--yellow); }
+
+    /* TABS */
+    .tab-nav { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; position: sticky; top: 52px; z-index: 99; }
+    .tab-btn { padding: 13px 18px; background: none; border: none; color: var(--muted); font-size: 13px; font-weight: 500; cursor: pointer; position: relative; transition: color .15s; display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--text); }
+    .tab-btn.active::after { content:''; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px; background: var(--blue); }
+    .tab-badge { background: var(--red); color: #fff; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 10px; display: none; }
+    .tab-badge.show { display: inline-block; }
+
+    /* LAYOUT */
     main { max-width: 1400px; margin: 0 auto; padding: 24px; }
-    section { margin-bottom: 32px; }
-    h2 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 12px; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .sec-title { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 14px; }
 
-    /* ── STATS GRID ── */
-    .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-      gap: 12px;
-    }
-    .stat-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 16px;
-    }
-    .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; }
-    .stat-value { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
-    .stat-value.green { color: var(--green); }
-    .stat-value.blue { color: var(--blue); }
-    .stat-value.yellow { color: var(--yellow); }
-    .stat-value.purple { color: var(--purple); }
-    .stat-value.orange { color: var(--orange); }
-    .stat-value.red { color: var(--red); }
+    /* INBOX GRID */
+    .inbox-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; }
 
-    /* ── PIPELINE BAR ── */
-    .pipeline-bar {
-      display: flex;
-      gap: 2px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 16px;
-      overflow-x: auto;
-    }
-    .pipeline-stage {
-      flex: 1;
-      min-width: 80px;
-      text-align: center;
-    }
-    .stage-count {
-      font-size: 22px;
-      font-weight: 700;
-      font-variant-numeric: tabular-nums;
-    }
-    .stage-label {
-      font-size: 10px;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin-top: 4px;
-    }
-    .stage-arrow { color: var(--border); font-size: 18px; display: flex; align-items: center; padding-top: 4px; }
+    /* LEAD CARD */
+    .lead-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    .card-sep { height: 1px; background: var(--border); }
 
-    /* ── PENDING APPROVALS ── */
-    .approval-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-      gap: 14px;
-    }
-    .approval-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 16px;
-    }
-    .approval-card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 12px;
-    }
-    .lead-name { font-weight: 600; font-size: 15px; }
-    .lead-location { color: var(--muted); font-size: 12px; margin-top: 2px; }
-    .score-badge {
-      font-size: 18px;
-      font-weight: 700;
-      padding: 4px 10px;
-      border-radius: 6px;
-      font-variant-numeric: tabular-nums;
-      flex-shrink: 0;
-    }
-    .score-badge.hot { background: rgba(249, 115, 22, 0.15); color: var(--orange); }
-    .score-badge.warm { background: rgba(234, 179, 8, 0.15); color: var(--yellow); }
-    .score-badge.cold { background: rgba(59, 130, 246, 0.15); color: var(--blue); }
+    .card-top { padding: 16px 16px 12px; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+    .card-name { font-weight: 600; font-size: 15px; line-height: 1.3; }
+    .card-sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .card-google { color: var(--yellow); font-size: 12px; margin-top: 2px; }
 
-    .approval-metrics {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-      margin-bottom: 14px;
-    }
-    .metric { background: var(--surface2); border-radius: 6px; padding: 8px 10px; }
-    .metric-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
-    .metric-value { font-size: 13px; font-weight: 600; margin-top: 2px; }
-    .metric-value.good { color: var(--green); }
-    .metric-value.bad { color: var(--red); }
-    .metric-value.mid { color: var(--yellow); }
+    .score-badge { flex-shrink: 0; font-size: 20px; font-weight: 700; padding: 5px 11px; border-radius: 8px; font-variant-numeric: tabular-nums; text-align: center; line-height: 1.1; }
+    .score-badge small { display: block; font-size: 9px; font-weight: 500; opacity: .7; }
+    .score-badge.hot { background: rgba(249,115,22,.15); color: var(--orange); }
+    .score-badge.warm { background: rgba(234,179,8,.15); color: var(--yellow); }
+    .score-badge.cold { background: rgba(59,130,246,.15); color: var(--blue); }
 
-    .wa-response-text {
-      font-size: 12px;
-      color: var(--muted);
-      font-style: italic;
-      background: var(--surface2);
-      border-radius: 6px;
-      padding: 8px 10px;
-      margin-bottom: 14px;
-      max-height: 60px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
+    /* CONTACT */
+    .card-contact { padding: 11px 16px; display: flex; flex-direction: column; gap: 7px; }
+    .c-row { display: flex; align-items: center; gap: 8px; font-size: 13px; min-width: 0; }
+    .c-icon { font-size: 14px; flex-shrink: 0; width: 18px; text-align: center; }
+    .c-val { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .c-val.dim { color: var(--muted); font-style: italic; }
+    .ext-link { color: var(--blue); text-decoration: none; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 4px; background: rgba(59,130,246,.1); flex-shrink: 0; }
+    .ext-link:hover { background: rgba(59,130,246,.2); }
 
-    .approval-actions { display: flex; gap: 8px; }
-    .btn {
-      flex: 1;
-      padding: 8px 12px;
-      border-radius: 7px;
-      border: none;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: opacity 0.15s;
-    }
-    .btn:hover { opacity: 0.85; }
-    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-    .btn-approve { background: var(--green); color: #000; }
-    .btn-discard { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
-    .btn-discard:hover { color: var(--red); border-color: var(--red); }
+    /* WA RESPONSE */
+    .card-resp { padding: 11px 16px; background: rgba(0,0,0,.15); }
+    .resp-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .time-chip { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; }
+    .time-chip.fast { background: rgba(34,197,94,.15); color: var(--green); }
+    .time-chip.mid  { background: rgba(234,179,8,.15);  color: var(--yellow); }
+    .time-chip.slow { background: rgba(239,68,68,.15);  color: var(--red); }
+    .time-chip.none { background: rgba(100,116,139,.1); color: var(--muted); }
+    .resp-qual { font-size: 11px; color: var(--muted); }
+    .resp-text { font-size: 12px; font-style: italic; color: var(--text); opacity: .85; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+    .resp-sent { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
-    /* ── LEADS TABLE ── */
-    .table-controls {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 12px;
-      flex-wrap: wrap;
-    }
-    .table-controls select, .table-controls input {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 7px 12px;
-      border-radius: 7px;
-      font-size: 13px;
-      outline: none;
-    }
-    .table-controls input { flex: 1; min-width: 200px; }
-    .table-controls select:focus, .table-controls input:focus { border-color: var(--blue); }
+    /* SCORE BARS */
+    .card-scores { padding: 11px 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; }
+    .s-row { display: flex; align-items: center; gap: 6px; }
+    .s-lbl { font-size: 10px; color: var(--muted); width: 36px; flex-shrink: 0; }
+    .s-track { flex: 1; height: 5px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
+    .s-fill { height: 100%; border-radius: 3px; }
+    .s-fill.hi  { background: var(--green); }
+    .s-fill.mid { background: var(--yellow); }
+    .s-fill.lo  { background: var(--blue); }
+    .s-fill.zero{ background: var(--border); }
+    .s-num { font-size: 10px; color: var(--muted); width: 20px; text-align: right; font-variant-numeric: tabular-nums; flex-shrink: 0; }
 
-    .table-wrap {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      overflow: hidden;
-    }
+    /* CARD ACTIONS */
+    .card-actions { padding: 12px 16px; display: flex; gap: 8px; }
+    .btn-ok  { flex: 2; padding: 9px 0; background: var(--green); color: #000; border: none; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; transition: opacity .15s; }
+    .btn-ok:hover { opacity: .85; }
+    .btn-ok:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-no  { flex: 1; padding: 9px 0; background: var(--surface2); color: var(--muted); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .15s; }
+    .btn-no:hover { color: var(--red); border-color: var(--red); }
+    .btn-no:disabled { opacity: .4; cursor: not-allowed; }
+
+    /* EMPTY */
+    .empty-box { text-align: center; padding: 64px 20px; color: var(--muted); grid-column: 1/-1; }
+    .empty-box .ei { font-size: 32px; margin-bottom: 12px; }
+    .empty-box .et { font-size: 15px; color: var(--text); margin-bottom: 6px; }
+
+    /* PIPELINE TAB */
+    .stats-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; margin-bottom: 24px; }
+    .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+    .stat-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+    .stat-val { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .funnel-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; overflow-x: auto; }
+    .funnel-row { display: flex; align-items: center; gap: 4px; min-width: 580px; }
+    .f-stage { flex: 1; text-align: center; }
+    .f-count { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .f-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-top: 4px; }
+    .f-arrow { color: var(--border); font-size: 18px; flex-shrink: 0; }
+
+    /* LEADS TABLE TAB */
+    .tbl-controls { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+    .tbl-controls select, .tbl-controls input { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 7px 12px; border-radius: 7px; font-size: 13px; outline: none; }
+    .tbl-controls input { flex: 1; min-width: 200px; }
+    .tbl-controls select:focus, .tbl-controls input:focus { border-color: var(--blue); }
+    .tbl-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
     table { width: 100%; border-collapse: collapse; }
     thead { background: var(--surface2); }
-    th {
-      padding: 10px 14px;
-      text-align: left;
-      font-size: 11px;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      font-weight: 600;
-    }
-    td {
-      padding: 10px 14px;
-      border-top: 1px solid var(--border);
-      font-size: 13px;
-      vertical-align: middle;
-    }
-    tr:hover td { background: rgba(255,255,255,0.02); }
+    th { padding: 10px 14px; text-align: left; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+    td { padding: 10px 14px; border-top: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
+    tr:hover td { background: rgba(255,255,255,.02); }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+    .p-novo            { background: rgba(139,92,246,.15);  color: #a78bfa; }
+    .p-enriched        { background: rgba(59,130,246,.15);  color: #60a5fa; }
+    .p-tested          { background: rgba(234,179,8,.15);   color: #fbbf24; }
+    .p-scored          { background: rgba(249,115,22,.15);  color: #fb923c; }
+    .p-pending_approval{ background: rgba(239,68,68,.15);   color: #f87171; }
+    .p-approved        { background: rgba(34,197,94,.15);   color: #4ade80; }
+    .p-outreach        { background: rgba(6,182,212,.15);   color: #22d3ee; }
+    .p-descartado      { background: rgba(100,116,139,.15); color: #94a3b8; }
+    .pag { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border-top: 1px solid var(--border); background: var(--surface2); }
+    .pag-info { color: var(--muted); font-size: 12px; }
+    .pag-btns { display: flex; gap: 6px; }
+    .pag-btn { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 12px; }
+    .pag-btn:disabled { opacity: .4; cursor: not-allowed; }
+    .pag-btn:hover:not(:disabled) { border-color: var(--blue); }
 
-    .status-pill {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 20px;
-      font-size: 11px;
-      font-weight: 600;
-    }
-    .status-novo { background: rgba(139,92,246,0.15); color: #a78bfa; }
-    .status-enriched { background: rgba(59,130,246,0.15); color: #60a5fa; }
-    .status-tested { background: rgba(234,179,8,0.15); color: #fbbf24; }
-    .status-scored { background: rgba(249,115,22,0.15); color: #fb923c; }
-    .status-pending_approval { background: rgba(239,68,68,0.15); color: #f87171; }
-    .status-approved { background: rgba(34,197,94,0.15); color: #4ade80; }
-    .status-outreach { background: rgba(6,182,212,0.15); color: #22d3ee; }
-    .status-descartado { background: rgba(100,116,139,0.15); color: #94a3b8; }
-
-    .pagination {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 12px 14px;
-      border-top: 1px solid var(--border);
-      background: var(--surface2);
-    }
-    .pagination-info { color: var(--muted); font-size: 12px; }
-    .pagination-btns { display: flex; gap: 6px; }
-    .page-btn {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 5px 10px;
-      border-radius: 5px;
-      cursor: pointer;
-      font-size: 12px;
-    }
-    .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-    .page-btn:hover:not(:disabled) { border-color: var(--blue); }
-
-    /* ── EMPTY / LOADING STATES ── */
-    .empty {
-      padding: 40px;
-      text-align: center;
-      color: var(--muted);
-    }
-    .loading { animation: pulse 1.5s ease-in-out infinite; }
-    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-
-    .dot {
-      display: inline-block;
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      margin-right: 6px;
-    }
-    .dot.green { background: var(--green); }
-    .dot.red { background: var(--red); }
-
-    /* ── WHATSAPP STATUS ── */
-    .wa-section { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
-    .wa-status-card {
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: 10px; padding: 20px; flex: 1; min-width: 220px;
-    }
-    .wa-badge {
-      display: inline-flex; align-items: center; gap: 6px;
-      font-size: 13px; font-weight: 600; padding: 4px 10px;
-      border-radius: 20px; margin-bottom: 12px;
-    }
-    .wa-badge.connected { background: rgba(34,197,94,0.15); color: var(--green); }
-    .wa-badge.disconnected { background: rgba(239,68,68,0.15); color: var(--red); }
-    .wa-badge::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
-    .wa-number { font-size: 13px; color: var(--muted); margin-bottom: 16px; }
-    .wa-btn {
-      background: var(--surface2); border: 1px solid var(--border); color: var(--text);
-      padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px;
-      transition: background 0.15s; width: 100%;
-    }
-    .wa-btn:hover { background: var(--border); }
-    .wa-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    .wa-qr-card {
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: 10px; padding: 20px; display: none;
-      flex-direction: column; align-items: center; gap: 12px;
-    }
-    .wa-qr-card.show { display: flex; }
-    .wa-qr-card img { width: 200px; height: 200px; border-radius: 8px; background: white; padding: 8px; }
-    .wa-qr-hint { font-size: 12px; color: var(--muted); text-align: center; max-width: 200px; }
-    .wa-qr-timer { font-size: 11px; color: var(--yellow); }
-
-    /* ── NOVA CAMPANHA ── */
-    .campaign-box {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 20px;
-    }
-    .campaign-input-row {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 10px;
-      flex-wrap: wrap;
-    }
-    .campaign-input {
-      flex: 1;
-      min-width: 280px;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 10px 14px;
-      border-radius: 8px;
-      font-size: 14px;
-      outline: none;
-    }
-    .campaign-input:focus { border-color: var(--blue); }
-    .campaign-select {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 10px 12px;
-      border-radius: 8px;
-      font-size: 13px;
-      outline: none;
-      cursor: pointer;
-    }
-    .campaign-btn {
-      background: var(--blue);
-      color: #fff;
-      border: none;
-      padding: 10px 20px;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: opacity 0.15s;
-      white-space: nowrap;
-    }
-    .campaign-btn:hover { opacity: 0.85; }
-    .campaign-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-    .campaign-hint {
-      font-size: 12px;
-      color: var(--muted);
-      margin-bottom: 16px;
-    }
-    .jobs-list { display: flex; flex-direction: column; gap: 8px; }
-    .job-card {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px 16px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-    .job-query { font-size: 13px; font-weight: 500; flex: 1; min-width: 200px; }
+    /* CAMPANHAS TAB */
+    .camp-box { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
+    .camp-hint { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+    .camp-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .camp-input { flex: 1; min-width: 260px; background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 10px 14px; border-radius: 8px; font-size: 14px; outline: none; }
+    .camp-input:focus { border-color: var(--blue); }
+    .camp-select { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 8px; font-size: 13px; outline: none; cursor: pointer; }
+    .camp-btn { background: var(--blue); color: #fff; border: none; padding: 10px 20px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: opacity .15s; white-space: nowrap; }
+    .camp-btn:hover { opacity: .85; }
+    .camp-btn:disabled { opacity: .4; cursor: not-allowed; }
+    .jobs-list { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+    .job-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .job-query { font-size: 13px; font-weight: 500; flex: 1; min-width: 180px; }
     .job-meta { font-size: 12px; color: var(--muted); }
-    .job-status {
-      font-size: 11px;
-      font-weight: 600;
-      padding: 3px 8px;
-      border-radius: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    .job-status.running { background: rgba(234,179,8,0.15); color: var(--yellow); }
-    .job-status.done { background: rgba(34,197,94,0.15); color: var(--green); }
-    .job-status.error { background: rgba(239,68,68,0.15); color: var(--red); }
-    .job-spinner { animation: spin 1s linear infinite; display: inline-block; }
-    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    .job-pill { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 12px; text-transform: uppercase; letter-spacing: .05em; }
+    .job-pill.running { background: rgba(234,179,8,.15); color: var(--yellow); }
+    .job-pill.done    { background: rgba(34,197,94,.15);  color: var(--green); }
+    .job-pill.error   { background: rgba(239,68,68,.15);  color: var(--red); }
+
+    /* TEMPLATES TAB */
+    .tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; margin-bottom: 24px; }
+    .tpl-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+    .tpl-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+    .tpl-nome { font-weight: 600; font-size: 14px; }
+    .tpl-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .tpl-texto { font-size: 13px; color: var(--text); background: var(--surface2); border-radius: 7px; padding: 10px 12px; line-height: 1.5; font-style: italic; }
+    .tpl-actions { display: flex; gap: 6px; }
+    .tpl-btn { padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--muted); font-size: 12px; cursor: pointer; transition: all .15s; }
+    .tpl-btn:hover { color: var(--text); border-color: var(--blue); }
+    .tpl-btn.danger:hover { color: var(--red); border-color: var(--red); }
+    .tpl-form { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+    .tpl-form-title { font-size: 13px; font-weight: 600; }
+    .tpl-input { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 9px 12px; border-radius: 7px; font-size: 13px; outline: none; width: 100%; }
+    .tpl-input:focus { border-color: var(--blue); }
+    textarea.tpl-input { resize: vertical; min-height: 80px; font-family: inherit; line-height: 1.5; }
+    .tpl-save-btn { background: var(--blue); color: #fff; border: none; padding: 9px 20px; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; align-self: flex-start; }
+    .tpl-save-btn:hover { opacity: .85; }
+
+    /* UTILS */
+    .loading { animation: pulse 1.5s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .spin { animation: spin 1s linear infinite; display: inline-block; }
+    @keyframes spin { from{transform:rotate(0)} to{transform:rotate(360deg)} }
   </style>
 </head>
 <body>
 
 <header>
-  <div class="logo">Fair <span>Assist</span> — Pipeline de Prospecção</div>
+  <div class="logo">Fair <span>Assist</span> — Pipeline</div>
   <div class="header-right">
-    <div id="clock">--:--:--</div>
-    <button class="refresh-btn" onclick="loadAll()">↻ Atualizar</button>
+    <button class="wa-header-btn" id="wa-header-btn" onclick="toggleWaPanel()">
+      <span class="wa-dot off" id="wa-dot"></span>
+      <span id="wa-label" class="off">Verificando...</span>
+    </button>
+    <div id="clock"></div>
   </div>
 </header>
 
+<div class="wa-panel" id="wa-panel">
+  <div class="wa-panel-title">WhatsApp</div>
+  <div id="wa-panel-number" style="font-size:13px">—</div>
+  <button class="wa-action-btn" id="wa-reconnect-btn" onclick="reconnectWa()">⟳ Reconectar / Gerar QR</button>
+  <div class="qr-wrap" id="qr-wrap">
+    <img id="qr-img" src="" alt="QR Code" />
+    <div class="qr-hint">WhatsApp → Aparelhos conectados → Conectar aparelho</div>
+    <div id="qr-timer"></div>
+  </div>
+</div>
+
+<nav class="tab-nav">
+  <button class="tab-btn active" data-tab="inbox" onclick="switchTab('inbox')">
+    Inbox <span class="tab-badge" id="inbox-badge">0</span>
+  </button>
+  <button class="tab-btn" data-tab="pipeline" onclick="switchTab('pipeline')">Pipeline</button>
+  <button class="tab-btn" data-tab="leads" onclick="switchTab('leads')">Leads</button>
+  <button class="tab-btn" data-tab="campanhas" onclick="switchTab('campanhas')">Campanhas</button>
+  <button class="tab-btn" data-tab="templates" onclick="switchTab('templates')">Templates</button>
+</nav>
+
 <main>
 
-  <!-- NOVA CAMPANHA -->
-  <section>
-    <h2>Nova Campanha</h2>
-    <div class="campaign-box">
-      <div class="campaign-input-row">
-        <input 
-          type="text" 
-          id="campaign-query" 
-          class="campaign-input" 
-          placeholder="Ex: casa de câmbio São Paulo · ou cole um link do Google Maps"
-          onkeydown="if(event.key==='Enter') triggerScrape()"
-        />
-        <select id="campaign-max" class="campaign-select">
-          <option value="20">20 leads</option>
-          <option value="30" selected>30 leads</option>
-          <option value="50">50 leads</option>
-          <option value="80">80 leads</option>
-        </select>
-        <button class="campaign-btn" id="campaign-btn" onclick="triggerScrape()">
-          &#9654; Disparar
-        </button>
-      </div>
-      <div class="campaign-hint">
-        Cole uma busca do Google Maps ou escreva a query diretamente. O pipeline roda completo: Maps → Site → Instagram → WA Tester → Score → Aprovação.
-      </div>
-      <div id="jobs-list"></div>
+  <!-- INBOX -->
+  <div id="tab-inbox" class="tab-content active">
+    <div class="inbox-grid" id="inbox-grid">
+      <div class="empty-box"><div class="loading" style="color:var(--muted)">Carregando...</div></div>
     </div>
-  </section>
+  </div>
 
-  <!-- WHATSAPP STATUS -->
-  <section>
-    <h2>WhatsApp</h2>
-    <div class="wa-section">
-      <div class="wa-status-card">
-        <div id="wa-badge" class="wa-badge disconnected">Verificando...</div>
-        <div id="wa-number" class="wa-number">—</div>
-        <button class="wa-btn" id="wa-btn" onclick="reconnectWa()">⟳ Reconectar / Gerar QR</button>
-      </div>
-      <div class="wa-qr-card" id="wa-qr-card">
-        <div style="font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.06em">Escaneie com o WhatsApp</div>
-        <img id="wa-qr-img" src="" alt="QR Code" />
-        <div class="wa-qr-hint">Abra o WhatsApp → Aparelhos conectados → Conectar aparelho</div>
-        <div class="wa-qr-timer" id="wa-qr-timer"></div>
+  <!-- PIPELINE -->
+  <div id="tab-pipeline" class="tab-content">
+    <div class="sec-title">Hoje</div>
+    <div class="stats-row">
+      <div class="stat-card"><div class="stat-lbl">Prospectados</div><div class="stat-val loading" style="color:var(--blue)"    id="s-prospectados">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">Enriquecidos</div><div class="stat-val loading" style="color:var(--blue)"    id="s-enriquecidos">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">Testados WA</div> <div class="stat-val loading" style="color:var(--yellow)"  id="s-testados">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">Aprovados</div>   <div class="stat-val loading" style="color:var(--orange)"  id="s-aprovados">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">Enviados</div>    <div class="stat-val loading" style="color:var(--purple)"  id="s-enviados">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">Responderam</div> <div class="stat-val loading" style="color:var(--green)"   id="s-respostas">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">Convertidos</div> <div class="stat-val loading" style="color:var(--green)"   id="s-convertidos">—</div></div>
+    </div>
+    <div class="sec-title">Funil total</div>
+    <div class="funnel-wrap">
+      <div class="funnel-row">
+        <div class="f-stage"><div class="f-count loading" style="color:var(--purple)" id="p-novo">—</div><div class="f-lbl">Novos</div></div>
+        <div class="f-arrow">›</div>
+        <div class="f-stage"><div class="f-count loading" style="color:var(--blue)"   id="p-enriched">—</div><div class="f-lbl">Enriquecidos</div></div>
+        <div class="f-arrow">›</div>
+        <div class="f-stage"><div class="f-count loading" style="color:var(--yellow)" id="p-tested">—</div><div class="f-lbl">Testados</div></div>
+        <div class="f-arrow">›</div>
+        <div class="f-stage"><div class="f-count loading" style="color:var(--orange)" id="p-scored">—</div><div class="f-lbl">Scored</div></div>
+        <div class="f-arrow">›</div>
+        <div class="f-stage"><div class="f-count loading" style="color:var(--red)"    id="p-pending_approval">—</div><div class="f-lbl">Pendente</div></div>
+        <div class="f-arrow">›</div>
+        <div class="f-stage"><div class="f-count loading" style="color:var(--green)"  id="p-approved">—</div><div class="f-lbl">Aprovados</div></div>
+        <div class="f-arrow">›</div>
+        <div class="f-stage"><div class="f-count loading" style="color:var(--blue)"   id="p-outreach">—</div><div class="f-lbl">Outreach</div></div>
+        <div style="width:1px;background:var(--border);margin:0 6px;height:40px;align-self:center"></div>
+        <div class="f-stage"><div class="f-count loading" style="color:var(--muted)"  id="p-descartado">—</div><div class="f-lbl">Descartados</div></div>
       </div>
     </div>
-  </section>
+  </div>
 
-  <!-- TODAY'S STATS -->
-  <section>
-    <h2>Hoje</h2>
-    <div class="stats-grid" id="stats-grid">
-      <div class="stat-card"><div class="stat-label">Prospectados</div><div class="stat-value blue loading" id="s-prospectados">—</div></div>
-      <div class="stat-card"><div class="stat-label">Enriquecidos</div><div class="stat-value blue loading" id="s-enriquecidos">—</div></div>
-      <div class="stat-card"><div class="stat-label">Testados WA</div><div class="stat-value yellow loading" id="s-testados">—</div></div>
-      <div class="stat-card"><div class="stat-label">Aprovados</div><div class="stat-value orange loading" id="s-aprovados">—</div></div>
-      <div class="stat-card"><div class="stat-label">Enviados</div><div class="stat-value purple loading" id="s-enviados">—</div></div>
-      <div class="stat-card"><div class="stat-label">Responderam</div><div class="stat-value green loading" id="s-respostas">—</div></div>
-      <div class="stat-card"><div class="stat-label">Convertidos</div><div class="stat-value green loading" id="s-convertidos">—</div></div>
-    </div>
-  </section>
-
-  <!-- PIPELINE FUNNEL -->
-  <section>
-    <h2>Pipeline — Total por Etapa</h2>
-    <div class="pipeline-bar" id="pipeline-bar">
-      <div class="pipeline-stage">
-        <div class="stage-count loading" id="p-novo" style="color:var(--purple)">—</div>
-        <div class="stage-label">Novos</div>
-      </div>
-      <div class="stage-arrow">›</div>
-      <div class="pipeline-stage">
-        <div class="stage-count loading" id="p-enriched" style="color:var(--blue)">—</div>
-        <div class="stage-label">Enriquecidos</div>
-      </div>
-      <div class="stage-arrow">›</div>
-      <div class="pipeline-stage">
-        <div class="stage-count loading" id="p-tested" style="color:var(--yellow)">—</div>
-        <div class="stage-label">Testados</div>
-      </div>
-      <div class="stage-arrow">›</div>
-      <div class="pipeline-stage">
-        <div class="stage-count loading" id="p-scored" style="color:var(--orange)">—</div>
-        <div class="stage-label">Scored</div>
-      </div>
-      <div class="stage-arrow">›</div>
-      <div class="pipeline-stage">
-        <div class="stage-count loading" id="p-pending_approval" style="color:var(--red)">—</div>
-        <div class="stage-label">Pendente</div>
-      </div>
-      <div class="stage-arrow">›</div>
-      <div class="pipeline-stage">
-        <div class="stage-count loading" id="p-approved" style="color:var(--green)">—</div>
-        <div class="stage-label">Aprovados</div>
-      </div>
-      <div class="stage-arrow">›</div>
-      <div class="pipeline-stage">
-        <div class="stage-count loading" id="p-outreach" style="color:var(--blue)">—</div>
-        <div class="stage-label">Outreach</div>
-      </div>
-      <div style="width:1px;background:var(--border);margin:0 8px;"></div>
-      <div class="pipeline-stage">
-        <div class="stage-count loading" id="p-descartado" style="color:var(--muted)">—</div>
-        <div class="stage-label">Descartados</div>
-      </div>
-    </div>
-  </section>
-
-  <!-- PENDING APPROVALS -->
-  <section>
-    <h2>Aprovações Pendentes <span id="pending-count" style="color:var(--red)"></span></h2>
-    <div class="approval-grid" id="approval-grid">
-      <div class="empty loading">Carregando...</div>
-    </div>
-  </section>
-
-  <!-- ALL LEADS TABLE -->
-  <section>
-    <h2>Todos os Leads</h2>
-    <div class="table-controls">
+  <!-- LEADS -->
+  <div id="tab-leads" class="tab-content">
+    <div class="tbl-controls">
       <select id="filter-status" onchange="loadLeads(1)">
         <option value="">Todos os status</option>
         <option value="novo">Novo</option>
@@ -547,434 +300,553 @@
         <option value="outreach">Outreach</option>
         <option value="descartado">Descartado</option>
       </select>
-      <input type="text" id="search-input" placeholder="Buscar por nome..." oninput="debounceSearch()" />
+      <input type="text" id="search-input" placeholder="Buscar por nome..." oninput="debounce()" />
     </div>
-    <div class="table-wrap">
+    <div class="tbl-wrap">
       <table>
         <thead>
           <tr>
-            <th>Nome</th>
-            <th>Cidade / Estado</th>
-            <th>Status</th>
-            <th>Score</th>
-            <th>WhatsApp</th>
-            <th>Google</th>
-            <th>Criado em</th>
+            <th>Nome</th><th>Cidade / Estado</th><th>Status</th>
+            <th>WhatsApp</th><th>Site</th><th>Score</th><th>Google ⭐</th><th>Criado em</th>
           </tr>
         </thead>
         <tbody id="leads-tbody">
-          <tr><td colspan="7" class="empty loading">Carregando...</td></tr>
+          <tr><td colspan="7" style="padding:40px;text-align:center;color:var(--muted)" class="loading">Carregando...</td></tr>
         </tbody>
       </table>
-      <div class="pagination">
-        <div class="pagination-info" id="pagination-info">—</div>
-        <div class="pagination-btns">
-          <button class="page-btn" id="btn-prev" onclick="changePage(-1)" disabled>‹ Anterior</button>
-          <button class="page-btn" id="btn-next" onclick="changePage(1)" disabled>Próxima ›</button>
+      <div class="pag">
+        <div class="pag-info" id="pag-info">—</div>
+        <div class="pag-btns">
+          <button class="pag-btn" id="btn-prev" onclick="changePage(-1)" disabled>‹ Anterior</button>
+          <button class="pag-btn" id="btn-next" onclick="changePage(1)"  disabled>Próxima ›</button>
         </div>
       </div>
     </div>
-  </section>
+  </div>
+
+  <!-- CAMPANHAS -->
+  <div id="tab-campanhas" class="tab-content">
+    <div class="camp-box">
+      <div class="camp-hint">Cole uma query ou URL do Google Maps. O pipeline roda completo: Maps → Site → Instagram → WA → Score → Aprovação.</div>
+      <div class="camp-row">
+        <input type="text" id="camp-query" class="camp-input"
+          placeholder="casa de câmbio São Paulo · ou link do Maps"
+          onkeydown="if(event.key==='Enter') triggerScrape()" />
+        <select id="camp-max" class="camp-select">
+          <option value="20">20 leads</option>
+          <option value="30">30 leads</option>
+          <option value="50">50 leads</option>
+          <option value="80" selected>80 leads</option>
+          <option value="100">100 leads</option>
+        </select>
+        <select id="camp-template" class="camp-select">
+          <option value="">🤖 Mensagem gerada por IA</option>
+        </select>
+        <button class="camp-btn" id="camp-btn" onclick="triggerScrape()">▶ Disparar</button>
+      </div>
+      <div id="jobs-list"></div>
+    </div>
+  </div>
+
+  <!-- TEMPLATES -->
+  <div id="tab-templates" class="tab-content">
+    <div class="sec-title" style="margin-bottom:16px">Templates de Mensagem WA</div>
+
+    <!-- Form novo template -->
+    <div class="tpl-form" style="margin-bottom:24px">
+      <div class="tpl-form-title" id="tpl-form-title">Novo Template</div>
+      <input type="hidden" id="tpl-edit-id" />
+      <input type="text" class="tpl-input" id="tpl-nome" placeholder="Nome do template (ex: Pergunta dólar turismo)" />
+      <textarea class="tpl-input" id="tpl-texto" placeholder="Texto da mensagem que será enviada no WhatsApp..."></textarea>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="tpl-save-btn" onclick="saveTemplate()">Salvar Template</button>
+        <button class="tpl-btn" id="tpl-cancel-btn" onclick="cancelEdit()" style="display:none">Cancelar</button>
+      </div>
+    </div>
+
+    <!-- Lista de templates -->
+    <div class="tpl-grid" id="tpl-grid">
+      <div style="color:var(--muted);font-size:13px" class="loading">Carregando...</div>
+    </div>
+  </div>
 
 </main>
 
 <script>
-  let currentPage = 1;
-  let totalLeads = 0;
-  const LIMIT = 20;
-  let searchTimer = null;
+// ── UTILS ────────────────────────────────────────────────────────
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function waHref(n) {
+  if (!n) return null;
+  const c = n.replace(/[^\d]/g,'');
+  return 'https://wa.me/' + (c.startsWith('55') ? c : '55'+c);
+}
+function fmtMin(m) {
+  if (m == null) return '—';
+  return m < 60 ? m + ' min' : Math.floor(m/60) + 'h ' + (m%60) + 'min';
+}
+function fillClass(v) {
+  if (!v) return 'zero';
+  if (v >= 70) return 'hi';
+  if (v >= 40) return 'mid';
+  return 'lo';
+}
+function scoreClass(t) {
+  return t >= 70 ? 'hot' : t >= 50 ? 'warm' : 'cold';
+}
+function bar(val, lbl) {
+  return `<div class="s-row">
+    <span class="s-lbl">${lbl}</span>
+    <div class="s-track"><div class="s-fill ${fillClass(val)}" style="width:${val||0}%"></div></div>
+    <span class="s-num">${val||0}</span>
+  </div>`;
+}
 
-  // Clock
-  function updateClock() {
-    const now = new Date();
-    document.getElementById('clock').textContent =
-      now.toLocaleTimeString('pt-BR') + ' — ' + now.toLocaleDateString('pt-BR');
+// ── CLOCK ────────────────────────────────────────────────────────
+(function tick(){
+  document.getElementById('clock').textContent =
+    new Date().toLocaleTimeString('pt-BR') + ' — ' + new Date().toLocaleDateString('pt-BR');
+  setTimeout(tick, 1000);
+})();
+
+// ── TABS ─────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab===name));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id==='tab-'+name));
+  if (name==='pipeline')  { loadStats(); loadPipeline(); }
+  if (name==='leads')     loadLeads(currentPage);
+  if (name==='campanhas') { loadJobs(); loadTemplatesSelect(); }
+  if (name==='templates') loadTemplates();
+}
+
+// ── WA STATUS ────────────────────────────────────────────────────
+let waPanelOpen = false;
+let qrInterval = null;
+
+function toggleWaPanel() {
+  waPanelOpen = !waPanelOpen;
+  document.getElementById('wa-panel').classList.toggle('open', waPanelOpen);
+}
+document.addEventListener('click', e => {
+  if (waPanelOpen && !e.target.closest('#wa-panel') && !e.target.closest('#wa-header-btn')) {
+    waPanelOpen = false;
+    document.getElementById('wa-panel').classList.remove('open');
   }
-  setInterval(updateClock, 1000);
-  updateClock();
+});
 
-  // Auto-refresh every 30 seconds
-  setInterval(() => loadAll(), 30000);
-
-  async function loadAll() {
-    await Promise.all([loadStats(), loadPipeline(), loadPending(), loadLeads(currentPage)]);
-  }
-
-  async function loadStats() {
-    try {
-      const data = await fetch('/api/stats').then(r => r.json());
-      document.getElementById('s-prospectados').textContent = data.prospectados ?? 0;
-      document.getElementById('s-enriquecidos').textContent = data.enriquecidos ?? 0;
-      document.getElementById('s-testados').textContent = data.testados ?? 0;
-      document.getElementById('s-aprovados').textContent = data.aprovados ?? 0;
-      document.getElementById('s-enviados').textContent = data.enviados ?? 0;
-      document.getElementById('s-respostas').textContent = data.respostas ?? 0;
-      document.getElementById('s-convertidos').textContent = data.convertidos ?? 0;
-      document.querySelectorAll('.stat-value').forEach(el => el.classList.remove('loading'));
-    } catch (e) {
-      console.error('Erro ao carregar stats', e);
+async function loadWaStatus() {
+  try {
+    const d = await fetch('/api/whatsapp/status').then(r=>r.json());
+    const dot = document.getElementById('wa-dot');
+    const lbl = document.getElementById('wa-label');
+    const num = document.getElementById('wa-panel-number');
+    if (d.connected) {
+      dot.className = 'wa-dot on'; lbl.className = 'on';
+      lbl.textContent = d.number ? '+'+d.number : 'Conectado';
+      num.textContent = d.number ? '+'+d.number : 'Conectado';
+      stopQr(); document.getElementById('qr-wrap').classList.remove('show');
+    } else {
+      dot.className = 'wa-dot off'; lbl.className = 'off';
+      lbl.textContent = 'Desconectado'; num.textContent = 'Nenhum número vinculado';
     }
-  }
+  } catch {}
+}
 
-  async function loadPipeline() {
-    try {
-      const data = await fetch('/api/pipeline').then(r => r.json());
-      const stages = ['novo', 'enriched', 'tested', 'scored', 'pending_approval', 'approved', 'outreach', 'descartado'];
-      stages.forEach(s => {
-        const el = document.getElementById(`p-${s}`);
-        if (el) { el.textContent = data[s] ?? 0; el.classList.remove('loading'); }
-      });
-    } catch (e) {
-      console.error('Erro ao carregar pipeline', e);
+async function reconnectWa() {
+  const btn = document.getElementById('wa-reconnect-btn');
+  btn.disabled = true; btn.textContent = 'Aguardando QR...';
+  try { await fetch('/api/whatsapp/reconnect', {method:'POST'}); } catch {}
+  startQr();
+}
+
+function startQr() {
+  stopQr(); pollQr();
+  qrInterval = setInterval(pollQr, 5000);
+}
+function stopQr() {
+  if (qrInterval) { clearInterval(qrInterval); qrInterval = null; }
+  const btn = document.getElementById('wa-reconnect-btn');
+  btn.disabled = false; btn.textContent = '⟳ Reconectar / Gerar QR';
+}
+async function pollQr() {
+  try {
+    const d = await fetch('/api/whatsapp/qr').then(r=>r.json());
+    if (d.qr) {
+      document.getElementById('qr-img').src = d.qr;
+      document.getElementById('qr-wrap').classList.add('show');
+      let cd = 60;
+      const t = document.getElementById('qr-timer');
+      const iv = setInterval(() => { t.textContent = `QR expira em ${--cd}s`; if(cd<=0) clearInterval(iv); }, 1000);
     }
-  }
+    await loadWaStatus();
+  } catch {}
+}
+setInterval(loadWaStatus, 30000);
 
-  async function loadPending() {
-    try {
-      const data = await fetch('/api/pending').then(r => r.json());
-      const grid = document.getElementById('approval-grid');
-      const countEl = document.getElementById('pending-count');
+// ── INBOX ────────────────────────────────────────────────────────
+async function loadInbox() {
+  try {
+    const data = await fetch('/api/pending').then(r=>r.json());
+    const grid = document.getElementById('inbox-grid');
+    const badge = document.getElementById('inbox-badge');
+    badge.textContent = data.length;
+    badge.classList.toggle('show', data.length > 0);
 
-      countEl.textContent = data.length > 0 ? `(${data.length})` : '';
+    if (!data.length) {
+      grid.innerHTML = `<div class="empty-box"><div class="ei">✓</div><div class="et">Nenhum lead pendente</div><div>Dispare uma campanha para gerar novos leads.</div></div>`;
+      return;
+    }
 
-      if (!data.length) {
-        grid.innerHTML = '<div class="empty">Nenhum lead aguardando aprovação.</div>';
-        return;
+    grid.innerHTML = data.map(({lead, enrichment, waTest, score}) => {
+      const s = score?.score_total ?? 0;
+      const phone = lead.whatsapp || lead.telefone_google;
+      const wHref = waHref(phone);
+      const igUser = enrichment?.ig_username;
+      const mapsUrl = `https://www.google.com/maps/search/${encodeURIComponent((lead.nome||'') + ' ' + (lead.cidade||''))}`;
+
+      // WA response chip
+      let chipClass = 'none', chipText = 'Não testado';
+      if (waTest) {
+        if (!waTest.respondeu) { chipClass='none'; chipText='Sem resposta'; }
+        else if (waTest.tempo_resposta_min < 15) { chipClass='fast'; chipText='⚡ '+fmtMin(waTest.tempo_resposta_min); }
+        else if (waTest.tempo_resposta_min < 60)  { chipClass='mid';  chipText='⏱ '+fmtMin(waTest.tempo_resposta_min); }
+        else                                        { chipClass='slow'; chipText='🐢 '+fmtMin(waTest.tempo_resposta_min); }
       }
 
-      grid.innerHTML = data.map(({ lead, enrichment, waTest, score }) => {
-        const s = score?.score_total ?? 0;
-        const badgeClass = s >= 70 ? 'hot' : s >= 50 ? 'warm' : 'cold';
+      const wa  = score?.score_resposta  ?? 0;
+      const sit = score?.score_site      ?? 0;
+      const ig  = score?.score_instagram ?? 0;
+      const go  = score?.score_google    ?? 0;
 
-        const waDisplay = waTest
-          ? (waTest.respondeu
-              ? `${waTest.tempo_resposta_min < 60
-                  ? waTest.tempo_resposta_min + 'min'
-                  : Math.floor(waTest.tempo_resposta_min / 60) + 'h ' + (waTest.tempo_resposta_min % 60) + 'min'}`
-              : 'Não respondeu')
-          : 'Não testado';
-        const waClass = waTest?.respondeu
-          ? (waTest.tempo_resposta_min < 30 ? 'good' : waTest.tempo_resposta_min < 120 ? 'mid' : 'bad')
-          : 'bad';
+      const googleStr = lead.google_rating
+        ? `⭐ ${lead.google_rating}${lead.google_reviews ? ` (${lead.google_reviews})` : ''}`
+        : '';
 
-        const siteDisplay = enrichment?.tem_site
-          ? `${enrichment.site_score ?? 0}/100`
-          : 'Sem site';
-        const siteClass = enrichment?.tem_site ? (enrichment.site_score >= 60 ? 'good' : 'mid') : 'bad';
+      const igFollowers = enrichment?.ig_followers
+        ? ` · ${enrichment.ig_followers.toLocaleString('pt-BR')} seg`
+        : '';
 
-        const igDisplay = enrichment?.ig_username
-          ? (enrichment.ig_ativo ? `@${enrichment.ig_username}` : `@${enrichment.ig_username} (inativo)`)
-          : 'Sem Instagram';
-        const igClass = enrichment?.ig_ativo ? 'good' : 'bad';
-
-        const phone = lead.whatsapp || lead.telefone_google || '—';
-        const responseText = waTest?.resposta_texto
-          ? `"${waTest.resposta_texto.substring(0, 120)}${waTest.resposta_texto.length > 120 ? '...' : ''}"`
-          : '';
-
-        return `
-          <div class="approval-card" id="card-${lead.id}">
-            <div class="approval-card-header">
-              <div>
-                <div class="lead-name">${escHtml(lead.nome)}</div>
-                <div class="lead-location">${escHtml(lead.cidade || '')}${lead.cidade && lead.estado ? ' / ' : ''}${escHtml(lead.estado || '')}</div>
-                <div style="color:var(--muted);font-size:11px;margin-top:2px">${escHtml(phone)}</div>
-              </div>
-              <div class="score-badge ${badgeClass}">${s}/100</div>
-            </div>
-            <div class="approval-metrics">
-              <div class="metric">
-                <div class="metric-label">WhatsApp</div>
-                <div class="metric-value ${waClass}">${waDisplay}</div>
-              </div>
-              <div class="metric">
-                <div class="metric-label">Site</div>
-                <div class="metric-value ${siteClass}">${siteDisplay}</div>
-              </div>
-              <div class="metric">
-                <div class="metric-label">Instagram</div>
-                <div class="metric-value ${igClass}">${igDisplay}</div>
-              </div>
-              <div class="metric">
-                <div class="metric-label">Google</div>
-                <div class="metric-value ${lead.google_rating ? 'good' : 'bad'}">${lead.google_rating ? lead.google_rating + '★ (' + lead.google_reviews + ')' : 'Sem avaliações'}</div>
-              </div>
-            </div>
-            ${responseText ? `<div class="wa-response-text">${escHtml(responseText)}</div>` : ''}
-            <div class="approval-actions">
-              <button class="btn btn-approve" onclick="approve('${lead.id}')">✓ Aprovar e Enviar</button>
-              <button class="btn btn-discard" onclick="discard('${lead.id}')">✕ Descartar</button>
-            </div>
+      return `<div class="lead-card" id="card-${lead.id}">
+        <div class="card-top">
+          <div style="min-width:0">
+            <div class="card-name">${esc(lead.nome)}</div>
+            <div class="card-sub">${esc([lead.cidade,lead.estado].filter(Boolean).join(' / '))}</div>
+            ${googleStr ? `<div class="card-google">${googleStr}</div>` : ''}
           </div>
-        `;
-      }).join('');
-    } catch (e) {
-      console.error('Erro ao carregar pendentes', e);
+          <div class="score-badge ${scoreClass(s)}">${s}<small>/100</small></div>
+        </div>
+        <div class="card-sep"></div>
+        <div class="card-contact">
+          <div class="c-row">
+            <span class="c-icon">📱</span>
+            <span class="c-val${phone?'':' dim'}">${esc(phone||'Sem número')}</span>
+            ${wHref ? `<a class="ext-link" href="${wHref}" target="_blank">Abrir WA ↗</a>` : ''}
+          </div>
+          <div class="c-row">
+            <span class="c-icon">🌐</span>
+            <span class="c-val${lead.site?'':' dim'}">${lead.site ? esc(lead.site.replace(/^https?:\/\//,'')) : 'Sem site'}</span>
+            ${lead.site ? `<a class="ext-link" href="${esc(lead.site)}" target="_blank">Abrir ↗</a>` : ''}
+          </div>
+          <div class="c-row">
+            <span class="c-icon">📸</span>
+            <span class="c-val${igUser?'':' dim'}">${igUser ? '@'+esc(igUser)+igFollowers : 'Sem Instagram'}</span>
+            ${igUser ? `<a class="ext-link" href="https://instagram.com/${esc(igUser)}" target="_blank">Ver ↗</a>` : ''}
+          </div>
+          <div class="c-row">
+            <span class="c-icon">📍</span>
+            <span class="c-val dim">${esc(lead.endereco || [lead.cidade,lead.estado].filter(Boolean).join(', '))}</span>
+            <a class="ext-link" href="${mapsUrl}" target="_blank">Maps ↗</a>
+          </div>
+        </div>
+        <div class="card-sep"></div>
+        <div class="card-resp">
+          <div class="resp-header">
+            <span class="time-chip ${chipClass}">${chipText}</span>
+            ${waTest?.qualidade_resposta ? `<span class="resp-qual">Qualidade: ${waTest.qualidade_resposta}/100</span>` : ''}
+          </div>
+          ${waTest?.resposta_texto
+            ? `<div class="resp-text">"${esc(waTest.resposta_texto)}"</div>`
+            : waTest?.mensagem_enviada
+            ? `<div class="resp-sent">Enviado: "${esc(waTest.mensagem_enviada.substring(0,100))}"</div>`
+            : `<div class="resp-sent" style="color:var(--muted)">Nenhum teste WA enviado.</div>`}
+        </div>
+        <div class="card-sep"></div>
+        <div class="card-scores">
+          ${bar(wa,'WA')}${bar(sit,'Site')}${bar(ig,'IG')}${bar(go,'Google')}
+        </div>
+        <div class="card-sep"></div>
+        <div class="card-actions">
+          <button class="btn-ok" onclick="approve('${lead.id}')">✓ Aprovar e Enviar Pitch</button>
+          <button class="btn-no" onclick="discard('${lead.id}')">✕ Descartar</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) { console.error('Erro inbox', e); }
+}
+
+async function approve(id) {
+  const card = document.getElementById('card-'+id);
+  const ok = card.querySelector('.btn-ok');
+  const no = card.querySelector('.btn-no');
+  ok.disabled = no.disabled = true; ok.textContent = 'Enviando...';
+  try {
+    const r = await fetch('/api/leads/'+id+'/approve', {method:'POST'});
+    if (!r.ok) throw new Error();
+    card.style.cssText += 'transition:opacity .3s,transform .3s;opacity:0;transform:scale(.97)';
+    setTimeout(() => { card.remove(); syncInboxBadge(); loadPipeline(); loadStats(); }, 300);
+  } catch {
+    ok.disabled = no.disabled = false;
+    ok.textContent = '✓ Aprovar e Enviar Pitch';
+    alert('Erro ao aprovar. Tente novamente.');
+  }
+}
+
+async function discard(id) {
+  if (!confirm('Descartar este lead?')) return;
+  const card = document.getElementById('card-'+id);
+  const ok = card.querySelector('.btn-ok');
+  const no = card.querySelector('.btn-no');
+  ok.disabled = no.disabled = true;
+  try {
+    const r = await fetch('/api/leads/'+id+'/discard', {method:'POST'});
+    if (!r.ok) throw new Error();
+    card.style.cssText += 'transition:opacity .3s;opacity:0';
+    setTimeout(() => { card.remove(); syncInboxBadge(); loadPipeline(); }, 300);
+  } catch { ok.disabled = no.disabled = false; }
+}
+
+function syncInboxBadge() {
+  const cards = document.querySelectorAll('#inbox-grid .lead-card');
+  const badge = document.getElementById('inbox-badge');
+  badge.textContent = cards.length;
+  badge.classList.toggle('show', cards.length > 0);
+  if (!cards.length) {
+    document.getElementById('inbox-grid').innerHTML =
+      `<div class="empty-box"><div class="ei">✓</div><div class="et">Nenhum lead pendente</div><div>Inbox limpo.</div></div>`;
+  }
+}
+
+// ── PIPELINE ─────────────────────────────────────────────────────
+async function loadStats() {
+  try {
+    const d = await fetch('/api/stats').then(r=>r.json());
+    [['s-prospectados',d.prospectados],['s-enriquecidos',d.enriquecidos],
+     ['s-testados',d.testados],['s-aprovados',d.aprovados],
+     ['s-enviados',d.enviados],['s-respostas',d.respostas],
+     ['s-convertidos',d.convertidos]].forEach(([id,v]) => {
+      const el = document.getElementById(id);
+      if (el) { el.textContent = v??0; el.classList.remove('loading'); }
+    });
+  } catch {}
+}
+async function loadPipeline() {
+  try {
+    const d = await fetch('/api/pipeline').then(r=>r.json());
+    ['novo','enriched','tested','scored','pending_approval','approved','outreach','descartado'].forEach(s => {
+      const el = document.getElementById('p-'+s);
+      if (el) { el.textContent = d[s]??0; el.classList.remove('loading'); }
+    });
+  } catch {}
+}
+
+// ── LEADS TABLE ──────────────────────────────────────────────────
+let currentPage = 1, totalLeads = 0;
+const LIMIT = 20;
+let searchTimer;
+
+async function loadLeads(page) {
+  currentPage = page;
+  const status = document.getElementById('filter-status').value;
+  const search = document.getElementById('search-input').value;
+  const tbody = document.getElementById('leads-tbody');
+  tbody.innerHTML = '<tr><td colspan="7" style="padding:40px;text-align:center;color:var(--muted)" class="loading">Carregando...</td></tr>';
+  try {
+    const p = new URLSearchParams({page, limit: LIMIT});
+    if (status) p.set('status', status);
+    if (search) p.set('search', search);
+    const d = await fetch('/api/leads?'+p).then(r=>r.json());
+    totalLeads = d.total;
+    updatePag();
+    if (!d.leads.length) {
+      tbody.innerHTML = '<tr><td colspan="8" style="padding:40px;text-align:center;color:var(--muted)">Nenhum lead encontrado.</td></tr>';
+      return;
     }
+    tbody.innerHTML = d.leads.map(l => {
+      const date = new Date(l.criado_em).toLocaleDateString('pt-BR');
+      const wLink = l.whatsapp ? `<a href="${waHref(l.whatsapp)}" target="_blank" style="color:var(--green);font-size:12px;text-decoration:none">✓ WA ↗</a>` : '<span style="color:var(--muted)">—</span>';
+      const sLink = l.site ? `<a href="${esc(l.site)}" target="_blank" style="color:var(--blue);font-size:12px;text-decoration:none">↗</a>` : '<span style="color:var(--muted)">—</span>';
+      const scoreNum = l.score_total;
+      const scoreStr = scoreNum != null
+        ? `<span style="font-weight:600;color:${scoreNum>=70?'var(--green)':scoreNum>=40?'var(--yellow)':'var(--muted)'}">${scoreNum}</span><span style="color:var(--muted);font-size:11px">/100</span>`
+        : '<span style="color:var(--muted)">—</span>';
+      const goog  = l.google_rating
+        ? `<span style="color:var(--yellow)">${l.google_rating}★</span> <span style="color:var(--muted);font-size:12px">(${l.google_reviews||0})</span>`
+        : '<span style="color:var(--muted)">—</span>';
+      return `<tr>
+        <td style="font-weight:500">${esc(l.nome)}</td>
+        <td style="color:var(--muted)">${esc([l.cidade,l.estado].filter(Boolean).join(' / '))}</td>
+        <td><span class="pill p-${l.status}">${l.status.replace('_',' ')}</span></td>
+        <td>${wLink}</td><td>${sLink}</td><td>${scoreStr}</td><td>${goog}</td>
+        <td style="color:var(--muted)">${date}</td>
+      </tr>`;
+    }).join('');
+  } catch {
+    tbody.innerHTML = '<tr><td colspan="8" style="padding:40px;text-align:center;color:var(--muted)">Erro ao carregar leads.</td></tr>';
   }
+}
+function updatePag() {
+  const start = (currentPage-1)*LIMIT+1, end = Math.min(currentPage*LIMIT, totalLeads);
+  document.getElementById('pag-info').textContent = `${start}–${end} de ${totalLeads} leads`;
+  document.getElementById('btn-prev').disabled = currentPage <= 1;
+  document.getElementById('btn-next').disabled = end >= totalLeads;
+}
+function changePage(d) { loadLeads(currentPage+d); }
+function debounce() { clearTimeout(searchTimer); searchTimer = setTimeout(() => loadLeads(1), 400); }
 
-  async function loadLeads(page) {
-    currentPage = page;
-    const status = document.getElementById('filter-status').value;
-    const search = document.getElementById('search-input').value;
-    const tbody = document.getElementById('leads-tbody');
-    tbody.innerHTML = '<tr><td colspan="7" class="empty loading">Carregando...</td></tr>';
+// ── CAMPANHAS ────────────────────────────────────────────────────
+let pollInterval;
+async function triggerScrape() {
+  const q = document.getElementById('camp-query').value.trim();
+  if (!q) { document.getElementById('camp-query').focus(); return; }
+  const btn = document.getElementById('camp-btn');
+  btn.disabled = true; btn.textContent = '⏳ Iniciando...';
+  const templateId = document.getElementById('camp-template').value || undefined;
+  try {
+    const r = await fetch('/api/scraper/trigger', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({query:q, max:parseInt(document.getElementById('camp-max').value), templateId})
+    });
+    const j = await r.json();
+    if (j.error) { alert('Erro: '+j.error); return; }
+    document.getElementById('camp-query').value = '';
+    loadJobs();
+    if (!pollInterval)
+      pollInterval = setInterval(() => { loadJobs(); loadStats(); loadPipeline(); loadInbox(); }, 5000);
+  } catch { alert('Erro ao disparar.'); }
+  finally { btn.textContent = '▶ Disparar'; btn.disabled = false; }
+}
 
-    try {
-      const params = new URLSearchParams({ page, limit: LIMIT });
-      if (status) params.set('status', status);
-      if (search) params.set('search', search);
-
-      const data = await fetch(`/api/leads?${params}`).then(r => r.json());
-      totalLeads = data.total;
-
-      updatePagination();
-
-      if (!data.leads.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty">Nenhum lead encontrado.</td></tr>';
-        return;
-      }
-
-      tbody.innerHTML = data.leads.map(lead => {
-        const date = new Date(lead.criado_em).toLocaleDateString('pt-BR');
-        const wa = lead.whatsapp ? `<span style="color:var(--green)">✓</span>` : `<span style="color:var(--muted)">—</span>`;
-        const google = lead.google_rating
-          ? `${lead.google_rating}★ <span style="color:var(--muted)">(${lead.google_reviews})</span>`
-          : '<span style="color:var(--muted)">—</span>';
-
-        return `
-          <tr>
-            <td style="font-weight:500">${escHtml(lead.nome)}</td>
-            <td style="color:var(--muted)">${escHtml(lead.cidade || '')} ${lead.estado ? `/ ${lead.estado}` : ''}</td>
-            <td><span class="status-pill status-${lead.status}">${lead.status}</span></td>
-            <td style="color:var(--muted)">—</td>
-            <td>${wa}</td>
-            <td>${google}</td>
-            <td style="color:var(--muted)">${date}</td>
-          </tr>
-        `;
-      }).join('');
-    } catch (e) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty">Erro ao carregar leads.</td></tr>';
+async function loadJobs() {
+  try {
+    const jobs = await fetch('/api/scraper/jobs').then(r=>r.json());
+    const container = document.getElementById('jobs-list');
+    if (!jobs.some(j=>j.status==='running') && pollInterval) {
+      clearInterval(pollInterval); pollInterval = null;
     }
-  }
+    if (!jobs.length) { container.innerHTML = ''; return; }
+    container.innerHTML = '<div class="jobs-list">' + jobs.map(j => {
+      const elapsed = j.finished_at
+        ? Math.round((new Date(j.finished_at)-new Date(j.started_at))/1000)+'s'
+        : Math.round((Date.now()-new Date(j.started_at))/1000)+'s';
+      const label = j.status==='running'
+        ? '<span class="spin">⟳</span> Rodando'
+        : j.status==='done' ? '✓ Concluído' : '✗ Erro';
+      const meta = j.status==='done'
+        ? `${j.leads_found} encontrados · ${j.leads_new} novos · ${elapsed}`
+        : j.status==='running' ? elapsed+' decorridos...'
+        : j.error||'Falhou';
+      return `<div class="job-card">
+        <div class="job-query">${esc(j.query)}</div>
+        <div class="job-meta">${esc(meta)}</div>
+        <span class="job-pill ${j.status}">${label}</span>
+      </div>`;
+    }).join('') + '</div>';
+  } catch {}
+}
 
-  function updatePagination() {
-    const info = document.getElementById('pagination-info');
-    const start = (currentPage - 1) * LIMIT + 1;
-    const end = Math.min(currentPage * LIMIT, totalLeads);
-    info.textContent = `${start}–${end} de ${totalLeads} leads`;
-    document.getElementById('btn-prev').disabled = currentPage <= 1;
-    document.getElementById('btn-next').disabled = end >= totalLeads;
-  }
+// ── TEMPLATES ────────────────────────────────────────────────────
+let allTemplates = [];
 
-  function changePage(delta) {
-    loadLeads(currentPage + delta);
-  }
-
-  function debounceSearch() {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => loadLeads(1), 400);
-  }
-
-  async function approve(leadId) {
-    const card = document.getElementById(`card-${leadId}`);
-    const btns = card.querySelectorAll('.btn');
-    btns.forEach(b => b.disabled = true);
-    btns[0].textContent = 'Enviando...';
-
-    try {
-      const res = await fetch(`/api/leads/${leadId}/approve`, { method: 'POST' });
-      if (res.ok) {
-        card.style.transition = 'opacity 0.3s';
-        card.style.opacity = '0';
-        setTimeout(() => { card.remove(); loadPipeline(); loadStats(); }, 300);
-      } else {
-        throw new Error('Erro na resposta');
-      }
-    } catch {
-      btns.forEach(b => b.disabled = false);
-      btns[0].textContent = '✓ Aprovar e Enviar';
-      alert('Erro ao aprovar lead. Tente novamente.');
+async function loadTemplates() {
+  try {
+    allTemplates = await fetch('/api/templates').then(r=>r.json());
+    const grid = document.getElementById('tpl-grid');
+    if (!allTemplates.length) {
+      grid.innerHTML = `<div style="color:var(--muted);font-size:13px;grid-column:1/-1">Nenhum template ainda. Crie o primeiro acima.</div>`;
+      return;
     }
-  }
+    grid.innerHTML = allTemplates.map(t => `
+      <div class="tpl-card" id="tpl-${t.id}">
+        <div class="tpl-card-header">
+          <div>
+            <div class="tpl-nome">${esc(t.nome)}</div>
+            <div class="tpl-meta">${new Date(t.criado_em).toLocaleDateString('pt-BR')}</div>
+          </div>
+          <div class="tpl-actions">
+            <button class="tpl-btn" onclick="editTemplate('${t.id}')">Editar</button>
+            <button class="tpl-btn danger" onclick="deleteTemplate('${t.id}')">Excluir</button>
+          </div>
+        </div>
+        <div class="tpl-texto">"${esc(t.texto)}"</div>
+      </div>`).join('');
+  } catch {}
+}
 
-  async function discard(leadId) {
-    if (!confirm('Tem certeza que deseja descartar este lead?')) return;
-    const card = document.getElementById(`card-${leadId}`);
-    const btns = card.querySelectorAll('.btn');
-    btns.forEach(b => b.disabled = true);
+async function loadTemplatesSelect() {
+  try {
+    const templates = await fetch('/api/templates').then(r=>r.json());
+    const sel = document.getElementById('camp-template');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">🤖 Mensagem gerada por IA</option>' +
+      templates.map(t => `<option value="${t.id}"${cur===t.id?' selected':''}>${esc(t.nome)}</option>`).join('');
+  } catch {}
+}
 
-    try {
-      const res = await fetch(`/api/leads/${leadId}/discard`, { method: 'POST' });
-      if (res.ok) {
-        card.style.transition = 'opacity 0.3s';
-        card.style.opacity = '0';
-        setTimeout(() => { card.remove(); loadPipeline(); }, 300);
-      } else {
-        throw new Error();
-      }
-    } catch {
-      btns.forEach(b => b.disabled = false);
-      alert('Erro ao descartar lead.');
+async function saveTemplate() {
+  const id = document.getElementById('tpl-edit-id').value;
+  const nome = document.getElementById('tpl-nome').value.trim();
+  const texto = document.getElementById('tpl-texto').value.trim();
+  if (!nome || !texto) { alert('Preencha nome e texto.'); return; }
+  try {
+    if (id) {
+      await fetch('/api/templates/'+id, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({nome,texto})});
+    } else {
+      await fetch('/api/templates', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({nome,texto})});
     }
-  }
+    cancelEdit();
+    await loadTemplates();
+  } catch { alert('Erro ao salvar template.'); }
+}
 
-  function escHtml(str) {
-    if (!str) return '';
-    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
+function editTemplate(id) {
+  const t = allTemplates.find(t=>t.id===id);
+  if (!t) return;
+  document.getElementById('tpl-edit-id').value = t.id;
+  document.getElementById('tpl-nome').value = t.nome;
+  document.getElementById('tpl-texto').value = t.texto;
+  document.getElementById('tpl-form-title').textContent = 'Editar Template';
+  document.getElementById('tpl-cancel-btn').style.display = 'inline-block';
+  document.getElementById('tpl-nome').focus();
+  window.scrollTo({top:0, behavior:'smooth'});
+}
 
+function cancelEdit() {
+  document.getElementById('tpl-edit-id').value = '';
+  document.getElementById('tpl-nome').value = '';
+  document.getElementById('tpl-texto').value = '';
+  document.getElementById('tpl-form-title').textContent = 'Novo Template';
+  document.getElementById('tpl-cancel-btn').style.display = 'none';
+}
 
-  let waQrInterval = null;
-  let waQrCountdown = 0;
+async function deleteTemplate(id) {
+  if (!confirm('Excluir este template?')) return;
+  await fetch('/api/templates/'+id, {method:'DELETE'});
+  await loadTemplates();
+}
 
-  async function loadWaStatus() {
-    try {
-      const d = await fetch("/api/whatsapp/status").then(r => r.json());
-      const badge = document.getElementById("wa-badge");
-      const num = document.getElementById("wa-number");
-      if (d.connected) {
-        badge.className = "wa-badge connected";
-        badge.textContent = "Conectado";
-        num.textContent = d.number ? "+" + d.number : "Número conectado";
-        stopQrPolling();
-        document.getElementById("wa-qr-card").classList.remove("show");
-      } else {
-        badge.className = "wa-badge disconnected";
-        badge.textContent = "Desconectado";
-        num.textContent = "Nenhum número vinculado";
-      }
-    } catch {}
-  }
+// ── AUTO REFRESH ─────────────────────────────────────────────────
+setInterval(() => {
+  loadInbox();
+  const tab = document.querySelector('.tab-btn.active')?.dataset.tab;
+  if (tab==='pipeline') { loadStats(); loadPipeline(); }
+  if (tab==='leads')    loadLeads(currentPage);
+  if (tab==='campanhas') loadJobs();
+}, 30000);
 
-  async function reconnectWa() {
-    const btn = document.getElementById("wa-btn");
-    btn.disabled = true;
-    btn.textContent = "Aguardando QR...";
-    try {
-      await fetch("/api/whatsapp/reconnect", { method: "POST" });
-    } catch {}
-    startQrPolling();
-  }
-
-  function startQrPolling() {
-    stopQrPolling();
-    pollQr();
-    waQrInterval = setInterval(pollQr, 5000);
-  }
-
-  function stopQrPolling() {
-    if (waQrInterval) { clearInterval(waQrInterval); waQrInterval = null; }
-    const btn = document.getElementById("wa-btn");
-    btn.disabled = false;
-    btn.textContent = "⟳ Reconectar / Gerar QR";
-  }
-
-  async function pollQr() {
-    try {
-      const d = await fetch("/api/whatsapp/qr").then(r => r.json());
-      if (d.qr) {
-        const card = document.getElementById("wa-qr-card");
-        document.getElementById("wa-qr-img").src = d.qr;
-        card.classList.add("show");
-        waQrCountdown = 60;
-        const timer = document.getElementById("wa-qr-timer");
-        const countdown = setInterval(() => {
-          waQrCountdown--;
-          timer.textContent = `QR expira em ${waQrCountdown}s`;
-          if (waQrCountdown <= 0) clearInterval(countdown);
-        }, 1000);
-      }
-      // Check if connected
-      await loadWaStatus();
-    } catch {}
-  }
-
-  // Auto-check WA status every 30s
-  setInterval(loadWaStatus, 30000);
-
-  let jobPollInterval = null;
-
-  async function triggerScrape() {
-    const query = document.getElementById('campaign-query').value.trim();
-    const max = parseInt(document.getElementById('campaign-max').value);
-    if (!query) { document.getElementById('campaign-query').focus(); return; }
-    
-    const btn = document.getElementById('campaign-btn');
-    btn.disabled = true;
-    btn.textContent = '⏳ Iniciando...';
-    
-    try {
-      const res = await fetch('/api/scraper/trigger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, max }),
-      });
-      const job = await res.json();
-      if (job.error) { alert('Erro: ' + job.error); return; }
-      
-      document.getElementById('campaign-query').value = '';
-      btn.textContent = '▶ Disparar';
-      btn.disabled = false;
-      
-      loadJobs();
-      if (!jobPollInterval) {
-        jobPollInterval = setInterval(() => {
-          loadJobs();
-          loadStats();
-          loadPipeline();
-        }, 5000);
-      }
-    } catch (e) {
-      alert('Erro ao disparar scrape.');
-    } finally {
-      btn.textContent = '▶ Disparar';
-      btn.disabled = false;
-    }
-  }
-
-  async function loadJobs() {
-    try {
-      const jobs = await fetch('/api/scraper/jobs').then(r => r.json());
-      const container = document.getElementById('jobs-list');
-      
-      // Stop polling if no running jobs
-      const hasRunning = jobs.some(j => j.status === 'running');
-      if (!hasRunning && jobPollInterval) {
-        clearInterval(jobPollInterval);
-        jobPollInterval = null;
-      }
-      
-      if (!jobs.length) { container.innerHTML = ''; return; }
-      
-      container.innerHTML = '<div class="jobs-list">' + jobs.map(job => {
-        const elapsed = job.finished_at 
-          ? Math.round((new Date(job.finished_at) - new Date(job.started_at)) / 1000) + 's'
-          : Math.round((Date.now() - new Date(job.started_at)) / 1000) + 's';
-        
-        const statusLabel = job.status === 'running' 
-          ? '<span class="job-spinner">⟳</span> Rodando'
-          : job.status === 'done' ? '✓ Concluído' : '✗ Erro';
-        
-        const meta = job.status === 'done'
-          ? `${job.leads_found} encontrados · ${job.leads_new} novos · ${elapsed}`
-          : job.status === 'running'
-          ? `${elapsed} decorridos...`
-          : job.error || 'Falhou';
-        
-        return `<div class="job-card">
-          <div class="job-query">${escHtml(job.query)}</div>
-          <div class="job-meta">${escHtml(meta)}</div>
-          <span class="job-status ${job.status}">${statusLabel}</span>
-        </div>`;
-      }).join('') + '</div>';
-    } catch {}
-  }
-
-  // Initial load
-  loadAll();
-  loadWaStatus();
+// ── INIT ─────────────────────────────────────────────────────────
+loadInbox(); loadStats(); loadPipeline(); loadWaStatus(); loadTemplatesSelect();
 </script>
 </body>
 </html>

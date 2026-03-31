@@ -1,9 +1,10 @@
-import { Controller, Get, Post, Param, Query, Res, Body } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Put, Param, Query, Res, Body } from '@nestjs/common';
 import { Response } from 'express';
 import { join } from 'path';
 import axios from 'axios';
 import { DashboardService } from './dashboard.service';
 import { ScraperService } from '../scraper/scraper.service';
+import { TemplateStore } from '../wa-tester/wa-tester.service';
 
 const EVO_URL = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
 const EVO_KEY = process.env.EVOLUTION_API_KEY || '';
@@ -46,15 +47,40 @@ export class DashboardController {
   @Post('api/leads/:id/discard')
   discardLead(@Param('id') id: string) { return this.dashboardService.discardLead(id); }
 
+  @Post('api/leads/re-enrich-discarded')
+  reEnrichDiscarded() { return this.dashboardService.reEnrichDiscarded(); }
+
   // ── SCRAPER ──────────────────────────────────────────────────
 
   @Post('api/scraper/trigger')
-  async triggerScrape(@Body() body: { query: string; max?: number }) {
+  async triggerScrape(@Body() body: { query: string; max?: number; templateId?: string }) {
     if (!body.query || body.query.trim().length < 3) {
       return { error: 'Query muito curta' };
     }
-    const job = await this.scraperService.triggerManualScrape(body.query.trim(), body.max || 30);
+    const job = await this.scraperService.triggerManualScrape(body.query.trim(), body.max || 30, body.templateId);
     return job;
+  }
+
+  // ── TEMPLATES ─────────────────────────────────────────────────
+
+  @Get('api/templates')
+  getTemplates() { return TemplateStore.list(); }
+
+  @Post('api/templates')
+  createTemplate(@Body() body: { nome: string; texto: string }) {
+    if (!body.nome?.trim() || !body.texto?.trim()) return { error: 'Nome e texto são obrigatórios' };
+    return TemplateStore.create(body.nome.trim(), body.texto.trim());
+  }
+
+  @Put('api/templates/:id')
+  updateTemplate(@Param('id') id: string, @Body() body: { nome: string; texto: string }) {
+    const t = TemplateStore.update(id, body.nome?.trim(), body.texto?.trim());
+    return t ?? { error: 'Template não encontrado' };
+  }
+
+  @Delete('api/templates/:id')
+  deleteTemplate(@Param('id') id: string) {
+    return { ok: TemplateStore.delete(id) };
   }
 
   @Get('api/scraper/jobs')

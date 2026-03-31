@@ -10,6 +10,7 @@ export class DashboardService {
 
   constructor(
     @InjectQueue('outreach_queue') private outreachQueue: Queue,
+    @InjectQueue('enrichment_queue') private enrichmentQueue: Queue,
     private crmService: CrmService,
   ) {}
 
@@ -75,6 +76,23 @@ export class DashboardService {
     await this.crmService.updateLead(leadId, { status: 'descartado' });
     this.logger.log(`Lead ${leadId} descartado via dashboard`);
     return { ok: true };
+  }
+
+  async reEnrichDiscarded(): Promise<{ queued: number }> {
+    // Re-enrich leads with a site that were discarded (may have had no WA found)
+    const leads = await this.crmService.getLeadsFiltered({ status: 'descartado' }, 1, 1000);
+    const withSite = leads.filter((l: any) => l.site);
+    let queued = 0;
+    for (const lead of withSite) {
+      await this.crmService.updateLead(lead.id, { status: 'novo', whatsapp: null, whatsapp_source: null });
+      await this.enrichmentQueue.add('enrich_lead', { leadId: lead.id }, {
+        attempts: 2,
+        backoff: { type: 'fixed', delay: 5000 },
+      });
+      queued++;
+    }
+    this.logger.log(`Re-enriquecendo ${queued} leads descartados`);
+    return { queued };
   }
 
   @Cron('0 21 * * *')
