@@ -6,6 +6,10 @@ export interface Lead {
   whatsapp_source?: string
   site?: string
   instagram?: string
+  facebook_url?: string
+  x_url?: string
+  email?: string
+  cep?: string
   endereco?: string
   cidade?: string
   estado?: string
@@ -15,6 +19,19 @@ export interface Lead {
   criado_em: string
   score_total?: number | null
   campaign_id?: string | null
+  // Sales Intelligence
+  is_hot?: boolean
+  pain_points?: string[]
+  ai_summary?: string
+  cold_email_draft?: string
+  google_reviews_raw?: GoogleReview[]
+}
+
+export interface GoogleReview {
+  author: string
+  rating: number
+  text: string
+  date?: string
 }
 
 export interface Enrichment {

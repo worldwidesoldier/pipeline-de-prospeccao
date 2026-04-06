@@ -53,6 +53,14 @@ export class DashboardController {
     return this.activityService.getRecent(limit ? parseInt(limit) : 50);
   }
 
+  @Get('api/leads/:id')
+  getLead(@Param('id') id: string) { return this.dashboardService.getLeadById(id); }
+
+  @Post('api/leads/:id/generate-email')
+  generateEmail(@Param('id') id: string, @Body() body: { context?: string }) {
+    return this.dashboardService.generateColdEmail(id, body.context || '');
+  }
+
   @Post('api/leads/:id/approve')
   approveLead(@Param('id') id: string) { return this.dashboardService.approveLead(id); }
 

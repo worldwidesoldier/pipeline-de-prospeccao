@@ -3,10 +3,13 @@ import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bullmq';
 import { Cron } from '@nestjs/schedule';
 import { CrmService } from '../crm/crm.service';
+import OpenAI from 'openai';
 
 @Injectable()
 export class DashboardService {
   private readonly logger = new Logger(DashboardService.name);
+
+  private readonly openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   constructor(
     @InjectQueue('outreach_queue') private outreachQueue: Queue,
@@ -79,6 +82,58 @@ export class DashboardService {
 
   async deleteAllLeads() {
     return this.crmService.deleteAllLeads();
+  }
+
+  async getLeadById(leadId: string): Promise<any> {
+    return this.crmService.getLeadById(leadId);
+  }
+
+  async generateColdEmail(leadId: string, context: string): Promise<{ email: string }> {
+    const lead = await this.crmService.getLeadById(leadId);
+    if (!lead) throw new Error('Lead não encontrado');
+
+    const painPoints = (lead.pain_points as string[] | null) ?? [];
+    const summary = lead.ai_summary || 'Sem resumo disponível';
+
+    const prompt = `Você é um especialista em copywriting B2B e cold email.
+
+Escreva um cold email personalizado para a empresa "${lead.nome}", localizada em ${lead.cidade || lead.estado || 'Brasil'}.
+
+Resumo de inteligência sobre o negócio:
+${summary}
+
+Principais dores identificadas nas avaliações dos clientes:
+${painPoints.length > 0 ? painPoints.map(p => `- ${p}`).join('\n') : '- Nenhuma dor identificada'}
+
+Contexto da proposta (produto/serviço que estamos oferecendo):
+${context || 'Fair Assist — bot de WhatsApp para casas de câmbio que responde cotações 24h, qualifica leads e passa para o humano na hora certa.'}
+
+Regras do email:
+- Assunto curto e instigante (max 8 palavras)
+- Abertura personalizada ligando as dores reais da empresa à nossa solução
+- 3 parágrafos no máximo
+- CTA claro no final (reunião de 15 minutos)
+- Tom direto, sem exageros, sem clichês de marketing
+- Em português brasileiro
+
+Retorne APENAS um JSON válido:
+{"assunto": "...", "corpo": "..."}`;
+
+    try {
+      const response = await this.openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }],
+        response_format: { type: 'json_object' },
+        temperature: 0.7,
+      });
+      const parsed = JSON.parse(response.choices[0].message.content || '{}');
+      const draft = JSON.stringify(parsed);
+      await this.crmService.updateLead(leadId, { cold_email_draft: draft } as any);
+      return { email: draft };
+    } catch (err) {
+      this.logger.error('Erro ao gerar cold email:', err);
+      throw err;
+    }
   }
 
   async getKanbanData() {

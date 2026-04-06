@@ -451,6 +451,10 @@ interface Lead {
   whatsapp_source: string;
   site: string;
   instagram: string;
+  facebook_url?: string;
+  x_url?: string;
+  email?: string;
+  cep?: string;
   endereco: string;
   cidade: string;
   estado: string;
@@ -458,6 +462,12 @@ interface Lead {
   google_reviews: number;
   status: string;
   criado_em: string;
+  // Sales Intelligence
+  is_hot?: boolean;
+  pain_points?: string[];
+  ai_summary?: string;
+  cold_email_draft?: string;
+  google_reviews_raw?: any[];
 }
 
 interface Enrichment {

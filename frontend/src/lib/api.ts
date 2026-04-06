@@ -43,6 +43,8 @@ export const api = {
     q.set('limit', String(p.limit ?? 20))
     return req<{ leads: Lead[]; total: number }>('/api/leads?' + q)
   },
+  getLead:             (id: string) => req<Lead>(`/api/leads/${id}`),
+  generateEmail:       (id: string, context: string) => post(`/api/leads/${id}/generate-email`, { context }) as Promise<{ email: string }>,
   approveLead:         (id: string) => post(`/api/leads/${id}/approve`),
   discardLead:         (id: string) => post(`/api/leads/${id}/discard`),
   deleteLead:          (id: string) => del(`/api/leads/${id}`),
