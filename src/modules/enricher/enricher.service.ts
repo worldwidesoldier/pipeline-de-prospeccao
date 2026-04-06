@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bullmq';
 import { CrmService } from '../crm/crm.service';
+import { ActivityService } from '../activity/activity.service';
 import { spawn } from 'child_process';
 import * as path from 'path';
 import OpenAI from 'openai';
@@ -15,6 +16,7 @@ export class EnricherService {
     @InjectQueue('wa_test_queue') private waTestQueue: Queue,
     @InjectQueue('scoring_queue') private scoringQueue: Queue,
     private crmService: CrmService,
+    private activity: ActivityService,
   ) {}
 
   async enrichLead(leadId: string, templateId?: string) {
@@ -89,12 +91,17 @@ export class EnricherService {
     }
 
     // 3. Tentar usar telefone do Google Maps como WhatsApp (último recurso)
+    let temNumeroFixo = false;
     if (!whatsapp && lead.telefone_google) {
       const cleaned = lead.telefone_google.replace(/[^\d+]/g, '');
-      // Só considera WhatsApp se for celular (começa com 9 após o DDD)
       if (cleaned.match(/^(\+?55)?(\d{2})(9\d{8})$/)) {
+        // Celular → pode ser WhatsApp
         whatsapp = cleaned;
         whatsappSource = 'google';
+      } else if (cleaned.match(/^(\+?55)?(\d{2})(\d{8})$/)) {
+        // Número fixo (8 dígitos após DDD) → guardar para contato por ligação
+        temNumeroFixo = true;
+        this.logger.log(`Lead ${lead.nome} tem número fixo (${cleaned}), sem WhatsApp`);
       }
     }
 
@@ -103,25 +110,33 @@ export class EnricherService {
 
     // 5. Atualizar lead com WhatsApp encontrado
     const updateData: any = {
-      status: 'enriched',
       whatsapp: whatsapp,
       whatsapp_source: whatsappSource,
     };
-    await this.crmService.updateLead(leadId, updateData);
 
     // 6. Rotear para próxima fila
-    if (whatsapp && whatsappSource !== 'unknown') {
+    if (whatsapp) {
+      updateData.status = 'enriched';
+      await this.crmService.updateLead(leadId, updateData);
       await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, {
         attempts: 2,
         backoff: { type: 'fixed', delay: 30000 },
       });
+      this.activity.log('enriched', `WA encontrado via ${whatsappSource} — enfileirando teste`, lead.nome);
       this.logger.log(`Lead ${lead.nome} → wa_test_queue (${whatsappSource})`);
+    } else if (temNumeroFixo) {
+      // Tem número fixo mas sem WhatsApp — guardar para contato por ligação
+      updateData.status = 'sem_whatsapp_fixo';
+      await this.crmService.updateLead(leadId, updateData);
+      this.logger.log(`Lead ${lead.nome} → sem_whatsapp_fixo (número fixo: ${lead.telefone_google})`);
     } else {
+      updateData.status = 'enriched';
+      await this.crmService.updateLead(leadId, updateData);
       await this.scoringQueue.add('score_lead', { leadId }, {
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },
       });
-      this.logger.log(`Lead ${lead.nome} → scoring_queue (sem WhatsApp)`);
+      this.logger.log(`Lead ${lead.nome} → scoring_queue (sem WhatsApp, sem fixo)`);
     }
   }
 

@@ -10,9 +10,8 @@ export class ScraperProcessor {
   constructor(private scraperService: ScraperService) {}
 
   @Process('run_scrape')
-  async handleRunScrape(job: Job) {
-    this.logger.log('Processando job de scrape...');
-    const total = await this.scraperService.runDailyScrape();
-    return { leadsEncontrados: total };
+  async handleRunScrape(_job: Job) {
+    this.logger.log('Job de scrape ignorado — use o endpoint /api/scraper/trigger');
+    return { ok: true };
   }
 }

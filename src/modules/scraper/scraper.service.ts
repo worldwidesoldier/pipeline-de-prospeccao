@@ -2,21 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bullmq';
 import { spawn } from 'child_process';
-import { Cron } from '@nestjs/schedule';
-import { CrmService } from '../crm/crm.service';
+import { CrmService, ScrapeJobRow } from '../crm/crm.service';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 
-export interface ScrapeJob {
-  id: string;
-  query: string;
-  status: 'running' | 'done' | 'error';
-  leads_found: number;
-  leads_new: number;
-  started_at: string;
-  finished_at?: string;
-  error?: string;
-}
+export type ScrapeJob = ScrapeJobRow;
 
 const ESTADOS_BRASIL = [
   'Acre', 'Alagoas', 'Amapá', 'Amazonas', 'Bahia', 'Ceará',
@@ -30,21 +20,22 @@ const ESTADOS_BRASIL = [
 @Injectable()
 export class ScraperService {
   private readonly logger = new Logger(ScraperService.name);
-  private jobs = new Map<string, ScrapeJob>();
+  // Only holds in-flight jobs for polling in runDailyScrape
+  private runningJobs = new Map<string, ScrapeJob>();
 
   constructor(
     @InjectQueue('enrichment_queue') private enrichmentQueue: Queue,
     private crmService: CrmService,
   ) {}
 
-  getJobs(): ScrapeJob[] {
-    return Array.from(this.jobs.values())
-      .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
-      .slice(0, 20);
+  async getJobs(): Promise<ScrapeJob[]> {
+    return this.crmService.getScrapeJobs();
   }
 
-  getJob(id: string): ScrapeJob | undefined {
-    return this.jobs.get(id);
+  async getJob(id: string): Promise<ScrapeJob | undefined> {
+    // Check in-flight first for live status, fall back to DB
+    if (this.runningJobs.has(id)) return this.runningJobs.get(id);
+    return (await this.crmService.getScrapeJobById(id)) ?? undefined;
   }
 
   async triggerManualScrape(query: string, max = 30, templateId?: string): Promise<ScrapeJob> {
@@ -56,7 +47,8 @@ export class ScraperService {
       leads_new: 0,
       started_at: new Date().toISOString(),
     };
-    this.jobs.set(job.id, job);
+    this.runningJobs.set(job.id, job);
+    await this.crmService.createScrapeJob(job);
 
     // Run async — don't await
     this.runScrapeJob(job, query, max, templateId).catch(err => {
@@ -64,6 +56,8 @@ export class ScraperService {
       job.error = err.message;
       job.finished_at = new Date().toISOString();
       this.logger.error(`Job ${job.id} falhou: ${err.message}`);
+      this.crmService.updateScrapeJob(job.id, { status: job.status, error: job.error, finished_at: job.finished_at });
+      this.runningJobs.delete(job.id);
     });
 
     return job;
@@ -82,7 +76,7 @@ export class ScraperService {
           : false;
         if (exists) continue;
 
-        const saved = await this.crmService.createLead({ ...lead, status: 'novo' });
+        const saved = await this.crmService.createLead({ ...lead, status: 'novo', campaign_id: job.id });
         if (saved) {
           await this.enrichmentQueue.add(
             'enrich_lead',
@@ -97,11 +91,20 @@ export class ScraperService {
       job.status = 'done';
       job.finished_at = new Date().toISOString();
       this.logger.log(`Job ${job.id} finalizado: ${leads.length} encontrados, ${newCount} novos`);
+      await this.crmService.updateScrapeJob(job.id, {
+        status: job.status,
+        leads_found: job.leads_found,
+        leads_new: job.leads_new,
+        finished_at: job.finished_at,
+      });
     } catch (err) {
       job.status = 'error';
       job.error = err.message;
       job.finished_at = new Date().toISOString();
+      await this.crmService.updateScrapeJob(job.id, { status: job.status, error: job.error, finished_at: job.finished_at });
       throw err;
+    } finally {
+      this.runningJobs.delete(job.id);
     }
   }
 
@@ -139,23 +142,5 @@ export class ScraperService {
     });
   }
 
-  @Cron('0 8 * * 1-5')
-  async runDailyScrape() {
-    this.logger.log('Iniciando scrape diário...');
-    let total = 0;
-    for (const estado of ESTADOS_BRASIL) {
-      const job = await this.triggerManualScrape(`casa de câmbio ${estado}`, 30);
-      // Wait for job to finish before next state
-      await new Promise<void>(resolve => {
-        const check = setInterval(() => {
-          const j = this.jobs.get(job.id);
-          if (j && j.status !== 'running') { clearInterval(check); resolve(); }
-        }, 3000);
-      });
-      total += this.jobs.get(job.id)?.leads_new || 0;
-      await new Promise(r => setTimeout(r, 5000));
-    }
-    this.logger.log(`Scrape diário finalizado. ${total} novos leads.`);
-    return total;
-  }
 }
+

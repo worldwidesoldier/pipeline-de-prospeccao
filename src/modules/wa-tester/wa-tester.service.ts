@@ -65,8 +65,10 @@ export class WaTesterService implements OnModuleInit {
   private pendingTests = new Map<string, { leadId: string; waTestId: string; enviadoEm: Date }>();
   // Lookup secundário para @lid: nome_lower → cleanPhone
   private pendingByName = new Map<string, string>();
-  // Cache @lid → cleanPhone (preenchido ao resolver o primeiro match)
+  // Cache @lid → cleanPhone (preenchido ao resolver o primeiro match, persiste em disco)
   private lidMap = new Map<string, string>();
+  // Arquivo de mapa persistente: sobrevive a restarts
+  private readonly LID_MAP_FILE = path.join(process.cwd(), 'data', 'lid-map.json');
   // Timestamp do último envio — rate limiting interno
   private lastSentAt: number = 0;
 
@@ -78,6 +80,16 @@ export class WaTesterService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    // Carrega o mapa persistente @lid → phone do disco
+    try {
+      fs.mkdirSync(path.dirname(this.LID_MAP_FILE), { recursive: true });
+      const raw = JSON.parse(fs.readFileSync(this.LID_MAP_FILE, 'utf8'));
+      for (const [lid, phone] of Object.entries(raw)) {
+        this.lidMap.set(lid, phone as string);
+      }
+      this.logger.log(`LidMap carregado: ${this.lidMap.size} entradas`);
+    } catch { /* arquivo ainda não existe — ok */ }
+
     // Reconstrói pendingTests a partir do banco para sobreviver a restarts
     const pending = await this.crmService.getPendingWaTests();
     let restored = 0;
@@ -126,6 +138,37 @@ export class WaTesterService implements OnModuleInit {
     this.pendingTests.delete(cleanPhone);
     for (const [k, v] of this.pendingByName) {
       if (v === cleanPhone) { this.pendingByName.delete(k); break; }
+    }
+  }
+
+  // Extrai texto e detecta tipo de mensagem (inclui respostas não-texto como menus e mídia)
+  private extractMessageInfo(message: any): { text: string; isInteractive: boolean; isMedia: boolean; messageType: string } {
+    const text = (message?.conversation || message?.extendedTextMessage?.text || '') as string;
+    const msgType =
+      message?.interactiveMessage         ? 'interactiveMessage'        :
+      message?.templateButtonReplyMessage  ? 'templateButtonReplyMessage' :
+      message?.buttonsResponseMessage      ? 'buttonsResponseMessage'     :
+      message?.listResponseMessage         ? 'listResponseMessage'        :
+      message?.imageMessage                ? 'imageMessage'               :
+      message?.audioMessage                ? 'audioMessage'               :
+      message?.pttMessage                  ? 'pttMessage'                 :
+      message?.videoMessage                ? 'videoMessage'               :
+      message?.documentMessage             ? 'documentMessage'            :
+      'text';
+    const isInteractive = ['interactiveMessage', 'templateButtonReplyMessage', 'buttonsResponseMessage', 'listResponseMessage'].includes(msgType);
+    const isMedia = ['imageMessage', 'audioMessage', 'pttMessage', 'videoMessage', 'documentMessage'].includes(msgType);
+    return { text, isInteractive, isMedia, messageType: msgType };
+  }
+
+  private saveLidMap(lidId: string, cleanPhone: string) {
+    this.lidMap.set(lidId, cleanPhone);
+    try {
+      fs.mkdirSync(path.dirname(this.LID_MAP_FILE), { recursive: true });
+      const obj: Record<string, string> = {};
+      for (const [k, v] of this.lidMap) obj[k] = v;
+      fs.writeFileSync(this.LID_MAP_FILE, JSON.stringify(obj, null, 2));
+    } catch (e) {
+      this.logger.warn(`Falha ao salvar lid-map: ${e}`);
     }
   }
 
@@ -252,10 +295,10 @@ export class WaTesterService implements OnModuleInit {
   async handleWebhook(data: any) {
     const remoteJid: string = data?.data?.key?.remoteJid || '';
     const pushName: string = data?.data?.pushName || '';
-    const messageText = data?.data?.message?.conversation ||
-                        data?.data?.message?.extendedTextMessage?.text || '';
+    const rawMessage = data?.data?.message || {};
+    const { text: messageText, isInteractive, isMedia, messageType } = this.extractMessageInfo(rawMessage);
 
-    if (!messageText) return;
+    if (!messageText && !isInteractive && !isMedia) return;
 
     let cleanPhone: string | undefined;
 
@@ -269,8 +312,27 @@ export class WaTesterService implements OnModuleInit {
       if (!cleanPhone && pushName) {
         cleanPhone = this.pendingByName.get(pushName.toLowerCase().trim());
         if (cleanPhone) {
-          this.lidMap.set(lidId, cleanPhone); // cache para futuros eventos do mesmo @lid
+          this.saveLidMap(lidId, cleanPhone);
           this.logger.log(`@lid resolvido: ${lidId} → ${cleanPhone} (via pushName "${pushName}")`);
+        }
+      }
+      // Fallback final: pushName vazio — match pelo teste pendente enviado mais recentemente (≤2h)
+      // WA Business pode responder de @lid com pushName vazio (ex: mensagens automáticas de atendimento)
+      if (!cleanPhone) {
+        const now = Date.now();
+        let bestPhone: string | undefined;
+        let bestTime = 0;
+        for (const [phone, entry] of this.pendingTests) {
+          const elapsed = now - entry.enviadoEm.getTime();
+          if (elapsed <= 2 * 60 * 60 * 1000 && entry.enviadoEm.getTime() > bestTime) {
+            bestTime = entry.enviadoEm.getTime();
+            bestPhone = phone;
+          }
+        }
+        if (bestPhone) {
+          this.saveLidMap(lidId, bestPhone);
+          this.logger.warn(`@lid ${lidId} pushName vazio — match por proximidade temporal para ${bestPhone}`);
+          cleanPhone = bestPhone;
         }
       }
     }
@@ -289,7 +351,35 @@ export class WaTesterService implements OnModuleInit {
     const leadNome = pushName || cleanPhone;
     this.logger.log(`Resposta recebida de ${leadNome} (${remoteJid}) em ${tempoMin}min`);
 
-    const { qualidade, isBot } = await this.avaliarQualidadeResposta(messageText);
+    // Avalia qualidade e detecção de bot conforme tipo de mensagem
+    let qualidade = 0;
+    let isBot = false;
+    let respostaTexto: string;
+
+    if (isInteractive) {
+      // WA Business enviou menu interativo automático → bot
+      isBot = true;
+      const interactiveLabels: Record<string, string> = {
+        interactiveMessage: '[menu interativo]',
+        templateButtonReplyMessage: '[resposta de botão]',
+        buttonsResponseMessage: '[resposta de botão]',
+        listResponseMessage: '[seleção de lista]',
+      };
+      respostaTexto = interactiveLabels[messageType] || `[${messageType}]`;
+    } else if (isMedia && !messageText) {
+      // Lead enviou imagem/áudio/vídeo sem texto → resposta humana
+      const mediaLabels: Record<string, string> = {
+        imageMessage: '[imagem]', audioMessage: '[áudio]',
+        pttMessage: '[nota de voz]', videoMessage: '[vídeo]', documentMessage: '[documento]',
+      };
+      respostaTexto = mediaLabels[messageType] || '[mídia]';
+      qualidade = 60; // resposta humana por mídia tem valor mínimo de qualidade
+    } else {
+      const result = await this.avaliarQualidadeResposta(messageText);
+      qualidade = result.qualidade;
+      isBot = result.isBot;
+      respostaTexto = messageText;
+    }
 
     if (isBot) {
       this.logger.log(`Bot detectado em ${leadNome} — descartando lead ${pending.leadId}`);
@@ -299,7 +389,7 @@ export class WaTesterService implements OnModuleInit {
         respondido_em: respondidoEm.toISOString(),
         tempo_resposta_min: tempoMin,
         qualidade_resposta: 0,
-        resposta_texto: messageText.substring(0, 500),
+        resposta_texto: respostaTexto.substring(0, 500),
         is_bot: true,
       });
       await this.crmService.updateLead(pending.leadId, { status: 'descartado_bot' });
@@ -311,7 +401,7 @@ export class WaTesterService implements OnModuleInit {
       respondido_em: respondidoEm.toISOString(),
       tempo_resposta_min: tempoMin,
       qualidade_resposta: qualidade,
-      resposta_texto: messageText.substring(0, 500),
+      resposta_texto: respostaTexto.substring(0, 500),
       is_bot: false,
     });
 
@@ -351,17 +441,14 @@ export class WaTesterService implements OnModuleInit {
     // Ordena por timestamp crescente — captura a 1ª resposta, não a última
     messages.sort((a, b) => (a.messageTimestamp || 0) - (b.messageTimestamp || 0));
 
-    // Usa TODOS os wa_tests com respondeu=false (inclui os marcados como timeout)
     const pendingRows = await this.crmService.getAllNoResponseWaTests();
     if (!pendingRows.length) {
       this.logger.log('Nenhum teste sem resposta para verificar');
       return 0;
     }
 
-    // Constrói lookup por phone e por nome
-    // Exclui leads já aprovados/em outreach/convertidos (evita false positives do histórico de outreach)
     const skipStatuses = new Set(['approved', 'outreach', 'convertido', 'descartado', 'descartado_bot']);
-    const byPhone = new Map<string, { waTestId: string; leadId: string; enviadoEm: Date; nomeLead: string }>();
+    const byPhone = new Map<string, { waTestId: string; leadId: string; enviadoEm: Date }>();
     const byName: Array<{ key: string; waTestId: string; leadId: string; enviadoEm: Date }> = [];
 
     for (const row of pendingRows) {
@@ -369,85 +456,149 @@ export class WaTesterService implements OnModuleInit {
       const cleanPhone = row.numero_testado.replace('@s.whatsapp.net', '').replace(/[^\d]/g, '');
       const enviadoEm = new Date(row.enviado_em);
       if (lead && !skipStatuses.has(lead.status)) {
-        byPhone.set(cleanPhone, { waTestId: row.id, leadId: row.lead_id, enviadoEm, nomeLead: lead.nome });
+        byPhone.set(cleanPhone, { waTestId: row.id, leadId: row.lead_id, enviadoEm });
         byName.push({ key: lead.nome.toLowerCase().trim(), waTestId: row.id, leadId: row.lead_id, enviadoEm });
       }
     }
 
-    const MAX_RESPONSE_WINDOW_MS = 72 * 60 * 60 * 1000; // 72h — janela máxima para considerar resposta válida
+    const MAX_RESPONSE_WINDOW_MS = 72 * 60 * 60 * 1000;
+    const commonWords = new Set(['câmbio', 'turismo', 'house', 'exchange', 'money', 'cambio']);
+    const distinctiveWord = (str: string) =>
+      str.split(/[\s|/-]+/).find(w => w.length >= 5 && !commonWords.has(w)) || '';
 
-    const processed = new Set<string>(); // waTestIds já processados
-    let count = 0;
+    // ── Fase 1: acumula TODAS as mensagens por waTestId ──────────
+    // Uma lead pode ter: bot auto-resposta (1s) + resposta humana (30min depois)
+    // Precisamos coletar tudo para escolher a melhor resposta na fase 2.
+    const MEDIA_LABELS: Record<string, string> = {
+      interactiveMessage: '[menu interativo]', templateButtonReplyMessage: '[resposta de botão]',
+      buttonsResponseMessage: '[resposta de botão]', listResponseMessage: '[seleção de lista]',
+      imageMessage: '[imagem]', audioMessage: '[áudio]', pttMessage: '[nota de voz]',
+      videoMessage: '[vídeo]', documentMessage: '[documento]',
+    };
+    type MsgEntry = { timestamp: Date; messageText: string; messageType: string; isInteractive: boolean; isMedia: boolean; pushName: string; jid: string; waTestId: string; leadId: string; enviadoEm: Date };
+    const accumulated = new Map<string, MsgEntry[]>();
+    const claimedMsgIdx = new Set<number>(); // evita que a mesma mensagem match 2 waTests
 
-    for (const msg of messages) {
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
       const jid: string = msg.key?.remoteJid || '';
       const pushName: string = (msg.pushName || '').toLowerCase().trim();
-      const messageText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+      const { text: messageText, isInteractive, isMedia, messageType } = this.extractMessageInfo(msg.message);
       const timestamp = new Date((msg.messageTimestamp || 0) * 1000);
 
-      if (!messageText) continue;
+      if (!messageText && !isInteractive && !isMedia) continue;
 
-      let entry: { waTestId: string; leadId: string; enviadoEm: Date } | undefined;
+      let waTestId: string | undefined;
+      let leadId: string | undefined;
+      let enviadoEm: Date | undefined;
 
       if (jid.endsWith('@s.whatsapp.net')) {
         const cleanPhone = jid.replace('@s.whatsapp.net', '');
         const e = byPhone.get(cleanPhone);
         const elapsed = timestamp.getTime() - (e?.enviadoEm.getTime() || 0);
-        if (e && timestamp > e.enviadoEm && elapsed <= MAX_RESPONSE_WINDOW_MS) entry = e;
-      } else if (jid.endsWith('@lid') && pushName) {
-        // Busca fuzzy: pushName contido no nome do lead OU vice-versa
-        for (const item of byName) {
-          if (processed.has(item.waTestId)) continue;
-          if (timestamp <= item.enviadoEm) continue;
-          const elapsed = timestamp.getTime() - item.enviadoEm.getTime();
-          if (elapsed > MAX_RESPONSE_WINDOW_MS) continue; // Muito tarde — não é resposta ao teste
-          const nomeLower = item.key;
-          // Extrai palavras com >= 5 chars (exclui "casa", "de", "câmbio" etc. que são genéricos)
-          const commonWords = new Set(['câmbio', 'turismo', 'house', 'exchange', 'money', 'cambio']);
-          const distinctiveWord = (str: string) =>
-            str.split(/[\s|/-]+/).find(w => w.length >= 5 && !commonWords.has(w)) || '';
-          const pushToken = distinctiveWord(pushName);
-          const nomeToken = distinctiveWord(nomeLower);
-          // Aceita se: pushName exato contido no nome, ou tokens distintivos coincidem
-          if (
-            nomeLower.includes(pushName) ||
-            (pushToken.length >= 5 && nomeLower.includes(pushToken)) ||
-            (nomeToken.length >= 5 && pushName.includes(nomeToken))
-          ) {
-            entry = item;
-            break;
+        if (e && timestamp > e.enviadoEm && elapsed <= MAX_RESPONSE_WINDOW_MS) {
+          waTestId = e.waTestId; leadId = e.leadId; enviadoEm = e.enviadoEm;
+        }
+      } else if (jid.endsWith('@lid')) {
+        // 0) Match por lidMap persistente (@lid já visto e mapeado para phone)
+        const lidId = jid.replace('@lid', '');
+        const knownPhone = this.lidMap.get(lidId);
+        if (knownPhone) {
+          const e = byPhone.get(knownPhone);
+          const elapsed = timestamp.getTime() - (e?.enviadoEm.getTime() || 0);
+          if (e && timestamp > e.enviadoEm && elapsed <= MAX_RESPONSE_WINDOW_MS) {
+            waTestId = e.waTestId; leadId = e.leadId; enviadoEm = e.enviadoEm;
           }
         }
+        // 1) Match por pushName (fuzzy) — quando lidMap não tem esse @lid ainda
+        if (!waTestId && pushName) {
+          for (const item of byName) {
+            if (timestamp <= item.enviadoEm) continue;
+            const elapsed = timestamp.getTime() - item.enviadoEm.getTime();
+            if (elapsed > MAX_RESPONSE_WINDOW_MS) continue;
+            const nomeLower = item.key;
+            const pushToken = distinctiveWord(pushName);
+            const nomeToken = distinctiveWord(nomeLower);
+            if (
+              nomeLower.includes(pushName) ||
+              (pushToken.length >= 5 && nomeLower.includes(pushToken)) ||
+              (nomeToken.length >= 5 && pushName.includes(nomeToken))
+            ) {
+              waTestId = item.waTestId; leadId = item.leadId; enviadoEm = item.enviadoEm;
+              break;
+            }
+          }
+        }
+        // Nota: NÃO usar time-proximity no replay — histórico tem mensagens de múltiplas
+        // empresas na mesma janela de tempo, causando false positives. Time-proximity
+        // só é confiável no webhook ao vivo (handleWebhook), não em replay histórico.
       }
 
-      if (!entry || processed.has(entry.waTestId)) continue;
-      processed.add(entry.waTestId);
+      if (!waTestId || !leadId || !enviadoEm) continue;
+      if (claimedMsgIdx.has(i)) continue;
+      claimedMsgIdx.add(i);
 
-      const tempoMin = Math.max(1, Math.round((timestamp.getTime() - entry.enviadoEm.getTime()) / 60000));
-      const { qualidade, isBot } = await this.avaliarQualidadeResposta(messageText);
+      if (!accumulated.has(waTestId)) accumulated.set(waTestId, []);
+      accumulated.get(waTestId)!.push({ timestamp, messageText, messageType, isInteractive, isMedia, pushName, jid, waTestId, leadId, enviadoEm });
+    }
 
-      this.logger.log(`Replay: ${pushName || jid} respondeu em ${tempoMin}min (isBot=${isBot}) — "${messageText.substring(0, 60)}"`);
+    // ── Fase 2: processa o melhor conjunto de respostas por waTestId ──
+    // Se há bot + humano, prefere humano. Usa 1ª msg para tempo_resposta_min.
+    let count = 0;
+    for (const [waTestId, msgs] of accumulated) {
+      const firstMsg = msgs[0]; // mensagens já ordenadas por timestamp
+      const tempoMin = Math.max(1, Math.round(
+        (firstMsg.timestamp.getTime() - firstMsg.enviadoEm.getTime()) / 60000
+      ));
 
-      if (isBot) {
-        await this.crmService.updateWaTest(entry.waTestId, {
-          respondeu: true, respondido_em: timestamp.toISOString(),
+      // Avalia cada mensagem, para na primeira não-bot
+      let bestMsg = firstMsg;
+      let bestQualidade = 0;
+      let bestIsBot = true;
+
+      for (const m of msgs) {
+        let qualidade = 0;
+        let isBot = false;
+        if (m.isInteractive) {
+          isBot = true; // menu WA Business = bot automático
+        } else if (m.isMedia && !m.messageText) {
+          isBot = false; // imagem/áudio/vídeo enviado pelo lead = resposta humana
+          qualidade = 60;
+        } else {
+          const result = await this.avaliarQualidadeResposta(m.messageText);
+          qualidade = result.qualidade;
+          isBot = result.isBot;
+        }
+        if (!isBot) {
+          bestMsg = m;
+          bestQualidade = qualidade;
+          bestIsBot = false;
+          break;
+        }
+        bestQualidade = qualidade; // guarda qualidade do bot
+      }
+
+      const firstLabel = firstMsg.messageText || MEDIA_LABELS[firstMsg.messageType] || `[${firstMsg.messageType}]`;
+      const bestLabel  = bestMsg.messageText  || MEDIA_LABELS[bestMsg.messageType]  || `[${bestMsg.messageType}]`;
+      this.logger.log(`Replay: ${bestMsg.pushName || bestMsg.jid} — ${msgs.length} msg(s), ${tempoMin}min, isBot=${bestIsBot} — "${bestLabel.substring(0, 60)}"`);
+
+      if (bestIsBot) {
+        await this.crmService.updateWaTest(waTestId, {
+          respondeu: true, respondido_em: firstMsg.timestamp.toISOString(),
           tempo_resposta_min: tempoMin, qualidade_resposta: 0,
-          resposta_texto: messageText.substring(0, 500), is_bot: true,
+          resposta_texto: firstLabel.substring(0, 500), is_bot: true,
         });
-        await this.crmService.updateLead(entry.leadId, { status: 'descartado_bot' });
-        this.activity.log('bot', `[Replay] Bot detectado — ${pushName} descartado`);
+        await this.crmService.updateLead(firstMsg.leadId, { status: 'descartado_bot' });
+        this.activity.log('bot', `[Replay] Bot detectado — ${firstMsg.pushName || firstMsg.jid} descartado`);
       } else {
-        await this.crmService.updateWaTest(entry.waTestId, {
-          respondeu: true, respondido_em: timestamp.toISOString(),
-          tempo_resposta_min: tempoMin, qualidade_resposta: qualidade,
-          resposta_texto: messageText.substring(0, 500), is_bot: false,
+        await this.crmService.updateWaTest(waTestId, {
+          respondeu: true, respondido_em: firstMsg.timestamp.toISOString(),
+          tempo_resposta_min: tempoMin, qualidade_resposta: bestQualidade,
+          resposta_texto: bestLabel.substring(0, 500), is_bot: false,
         });
-        // Re-score com a resposta real
-        await this.scoringQueue.add('score_lead', { leadId: entry.leadId });
-        this.activity.log('responded', `[Replay] ${pushName} respondeu em ${tempoMin}min — qualidade ${qualidade}/100`);
+        await this.scoringQueue.add('score_lead', { leadId: bestMsg.leadId });
+        this.activity.log('responded', `[Replay] ${bestMsg.pushName || bestMsg.jid} respondeu em ${tempoMin}min — qualidade ${bestQualidade}/100`);
       }
-
-      this.removePending(entry.waTestId);
       count++;
     }
 

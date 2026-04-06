@@ -3,6 +3,7 @@ import { BullModule } from '@nestjs/bull';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ConfigModule } from '@nestjs/config';
 
+import { ActivityModule } from './modules/activity/activity.module';
 import { CrmModule } from './modules/crm/crm.module';
 import { ScraperModule } from './modules/scraper/scraper.module';
 import { EnricherModule } from './modules/enricher/enricher.module';
@@ -34,6 +35,7 @@ const redisPort = (() => {
         backoff: { type: 'exponential', delay: 5000 },
       },
     }),
+    ActivityModule,
     CrmModule,
     ScraperModule,
     EnricherModule,

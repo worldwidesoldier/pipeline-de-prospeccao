@@ -30,4 +30,11 @@ export class WaTesterController {
     }
     return { ok: true };
   }
+
+  @Post('replay-responses')
+  @HttpCode(200)
+  async replayResponses() {
+    const replayed = await this.waTesterService.replayResponses();
+    return { replayed };
+  }
 }

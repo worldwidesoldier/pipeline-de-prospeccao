@@ -49,37 +49,36 @@ export class ScorerService {
 
     await this.crmService.updateLead(leadId, { status: 'scored' });
 
-    // Rotear baseado no score
-    if (scoreTotal >= 30) {
-      const isAutomatic = scoreTotal >= 70;
+    // Rotear: tem WhatsApp → sempre vai pro inbox manual
+    // Sem WhatsApp → descarta (não tem como fazer o mystery shop)
+    if (lead.whatsapp) {
       await this.approvalQueue.add('request_approval', {
         leadId,
         scoreTotal,
-        isAutomatic,
+        isAutomatic: false, // sempre aprovação manual por enquanto
       }, {
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },
       });
-      this.logger.log(
-        `Lead ${lead.nome} → approval_queue (${isAutomatic ? 'AUTO' : 'MANUAL'})`
-      );
+      this.logger.log(`Lead ${lead.nome} → inbox (score ${scoreTotal})`);
     } else {
       await this.crmService.updateLead(leadId, { status: 'descartado' });
-      this.logger.log(`Lead ${lead.nome} descartado (score ${scoreTotal} < 30)`);
+      this.logger.log(`Lead ${lead.nome} descartado (sem WhatsApp)`);
     }
   }
 
   private calcScoreResposta(lead: any, waTest: any): number {
     if (!lead.whatsapp) return 0;           // sem WA encontrado
     if (!waTest)        return 15;          // WA existe mas não testado ainda
-    if (!waTest.respondeu) return 20;       // WA existe, não respondeu
+    if (waTest.is_bot)  return 0;           // bot detectado → descartar
+    if (!waTest.respondeu) return 100;      // não respondeu → melhor lead (precisa do produto)
 
     const min = waTest.tempo_resposta_min;
-    if (min < 5)   return 100;
-    if (min < 15)  return 85;
-    if (min < 60)  return 65;
-    if (min < 240) return 45;
-    return 25;
+    if (min < 5)   return 10;   // respondeu rápido → já são bons, não precisam
+    if (min < 15)  return 25;
+    if (min < 60)  return 50;
+    if (min < 240) return 75;
+    return 100;                             // respondeu muito tarde → dor alta
   }
 
   private calcScoreSite(enrichment: any): number {

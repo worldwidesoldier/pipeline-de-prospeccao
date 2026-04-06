@@ -93,7 +93,7 @@ export function LeadCard({ item, pitchTemplates }: Props) {
         </div>
 
         {waTest?.resposta_texto ? (
-          <p className="text-[13px] text-slate-200 leading-relaxed italic">
+          <p className="text-[13px] text-slate-200 leading-relaxed italic max-h-[72px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-transparent">
             "{waTest.resposta_texto}"
           </p>
         ) : waNoResponse ? (

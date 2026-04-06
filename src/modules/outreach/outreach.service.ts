@@ -4,6 +4,61 @@ import { Queue } from 'bullmq';
 import { CrmService } from '../crm/crm.service';
 import OpenAI from 'openai';
 import axios from 'axios';
+import * as fs from 'fs';
+import * as path from 'path';
+
+// ── Outreach Template Store ──────────────────────────────────────
+export interface OutreachTemplates {
+  v1: { nome: string; texto: string };
+  v2: { nome: string; texto: string };
+  v3: { nome: string; texto: string };
+}
+
+const OUTREACH_TEMPLATES_FILE = path.join(process.cwd(), 'data', 'outreach-templates.json');
+
+const DEFAULT_OUTREACH_TEMPLATES: OutreachTemplates = {
+  v1: {
+    nome: 'V1 — Resposta lenta',
+    texto: `Oi, tudo bem?
+Semana passada mandei uma mensagem sobre câmbio de dólar — demorou [X horas] pra ter resposta. Nesse tempo já tinha fechado com outra casa.
+Somos da Fair Assist — bot pra WhatsApp que responde cotações na hora, 24h, qualifica o lead e passa pro humano na hora certa.
+7 dias grátis, sem contrato. Posso mostrar funcionando em 15 minutos?`,
+  },
+  v2: {
+    nome: 'V2 — Sem resposta',
+    texto: `Oi, tudo bem?
+Mandei uma mensagem sobre câmbio de dólar e não recebi resposta. Cada mensagem sem retorno é um cliente que foi pra concorrência.
+Somos da Fair Assist — bot que responde na hora, 24h, qualifica o lead e passa pro humano certo. 7 dias grátis. Posso mostrar em 15 minutos?`,
+  },
+  v3: {
+    nome: 'V3 — Resposta ruim',
+    texto: `Oi, tudo bem?
+Semana passada entrei em contato sobre câmbio — demorou [X horas] e a resposta não foi o que o cliente esperava.
+Somos da Fair Assist — bot no WhatsApp que responde cotações na hora, tira dúvidas e qualifica o lead antes de passar pra você. 7 dias grátis. Topa ver uma demo rápida?`,
+  },
+};
+
+export class OutreachTemplateStore {
+  static load(): OutreachTemplates {
+    try {
+      fs.mkdirSync(path.dirname(OUTREACH_TEMPLATES_FILE), { recursive: true });
+      return JSON.parse(fs.readFileSync(OUTREACH_TEMPLATES_FILE, 'utf8'));
+    } catch {
+      return DEFAULT_OUTREACH_TEMPLATES;
+    }
+  }
+  static save(templates: OutreachTemplates): void {
+    fs.mkdirSync(path.dirname(OUTREACH_TEMPLATES_FILE), { recursive: true });
+    fs.writeFileSync(OUTREACH_TEMPLATES_FILE, JSON.stringify(templates, null, 2));
+  }
+  static get(): OutreachTemplates { return this.load(); }
+  static updateVariant(variant: 'v1' | 'v2' | 'v3', nome: string, texto: string): OutreachTemplates {
+    const t = this.load();
+    t[variant] = { nome, texto };
+    this.save(t);
+    return t;
+  }
+}
 
 @Injectable()
 export class OutreachService {
@@ -27,11 +82,8 @@ export class OutreachService {
       return;
     }
 
-    const enrichment = await this.crmService.getEnrichmentByLeadId(leadId);
     const waTest = await this.crmService.getLatestWaTestByLeadId(leadId);
-    const score = await this.crmService.getScoreByLeadId(leadId);
-
-    const mensagem = await this.gerarMensagemPersonalizada(lead, enrichment, waTest, score);
+    const mensagem = this.selecionarTemplate(lead, waTest);
 
     await this.sendEvolutionMessage(lead.whatsapp, mensagem);
 
@@ -78,59 +130,34 @@ export class OutreachService {
     this.logger.log(`Resposta de lead ${leadId} — interesse: ${interesse.toUpperCase()}`);
   }
 
-  private async gerarMensagemPersonalizada(lead: any, enrichment: any, waTest: any, score: any): Promise<string> {
-    const problemasEncontrados = [];
+  private selecionarTemplate(lead: any, waTest: any): string {
+    const templates = OutreachTemplateStore.get();
+    const nome = lead.nome.split(' ')[0];
 
-    if (waTest && !waTest.respondeu) {
-      problemasEncontrados.push('não tem atendimento automático no WhatsApp (não responderam nossa mensagem de teste em 4 horas)');
-    } else if (waTest && waTest.tempo_resposta_min > 60) {
-      const h = Math.floor(waTest.tempo_resposta_min / 60);
-      problemasEncontrados.push(`demorou ${h}h para responder no WhatsApp`);
+    let texto: string;
+
+    if (!waTest || !waTest.respondeu) {
+      // V2: não respondeu
+      texto = templates.v2.texto;
+    } else {
+      const qualidade = waTest.qualidade_resposta ?? 100;
+      if (qualidade < 60) {
+        // V3: respondeu mas com qualidade ruim
+        texto = templates.v3.texto;
+      } else {
+        // V1: respondeu mas demorou
+        texto = templates.v1.texto;
+      }
     }
 
-    if (!enrichment?.tem_site) {
-      problemasEncontrados.push('não tem site');
-    } else if (enrichment.site_score < 50) {
-      problemasEncontrados.push('tem site mas sem informações de cotação ou contato');
-    }
+    const horas = waTest?.tempo_resposta_min
+      ? Math.round(waTest.tempo_resposta_min / 60)
+      : 0;
+    const horasStr = horas === 1 ? '1 hora' : `${horas} horas`;
 
-    if (!enrichment?.ig_ativo) {
-      problemasEncontrados.push('não tem presença ativa no Instagram');
-    }
-
-    const problema = problemasEncontrados.length > 0
-      ? problemasEncontrados.join(' e ')
-      : 'pode se beneficiar de atendimento automático';
-
-    const prompt = `Gere uma mensagem de WhatsApp de vendas para uma casa de câmbio chamada ${lead.nome}, localizada em ${lead.cidade || lead.estado || 'Brasil'}.
-
-Problema identificado: ${problema}.
-
-A mensagem deve:
-- Ser direta, empática e profissional
-- Mencionar especificamente o problema identificado (${problema})
-- Apresentar o Fair Assist como solução: bot WhatsApp com IA que atende 24/7 respondendo cotações, dúvidas e fazendo handoff para atendente humano
-- Oferecer 7 dias grátis sem compromisso
-- Máximo 5 linhas
-- Tom de conversa real, não de vendedor
-- Assinar como "Vitor — Fair Assist"
-- NÃO usar emojis excessivos
-- NÃO mencionar concorrentes
-
-Retorne APENAS a mensagem, sem explicações.`;
-
-    try {
-      const completion = await this.openai.chat.completions.create({
-        model: 'gpt-4.1-mini',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 300,
-        temperature: 0.7,
-      });
-      return completion.choices[0].message.content || this.getMensagemFallback(lead.nome);
-    } catch (err) {
-      this.logger.warn(`Erro OpenAI, usando fallback: ${err.message}`);
-      return this.getMensagemFallback(lead.nome);
-    }
+    return texto
+      .replace(/\[Nome\]/g, nome)
+      .replace(/\[X horas\]/g, horasStr);
   }
 
   async sendFollowUp(leadId: string, msgNumber: number) {
@@ -206,10 +233,6 @@ Retorne APENAS a mensagem, sem explicações.`;
     if (alto.some(w => t.includes(w))) return 'alto';
     if (baixo.some(w => t.includes(w))) return 'baixo';
     return 'medio';
-  }
-
-  private getMensagemFallback(nome: string): string {
-    return `Oi! Vi que ${nome} ainda não tem atendimento automático no WhatsApp.\n\nSou o Vitor, do Fair Assist — desenvolvemos um bot com IA que atende seus clientes 24h, responde cotações na hora e avisa sua equipe quando precisar de atenção humana.\n\n7 dias grátis, sem compromisso. Posso te mostrar como funciona?\n\nVitor — Fair Assist`;
   }
 
   private formatNumber(numero: string): string {
