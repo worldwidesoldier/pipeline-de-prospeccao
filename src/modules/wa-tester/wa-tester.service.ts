@@ -348,6 +348,9 @@ export class WaTesterService implements OnModuleInit {
 
     this.logger.log(`Replay: ${messages.length} mensagens recebidas encontradas`);
 
+    // Ordena por timestamp crescente — captura a 1ª resposta, não a última
+    messages.sort((a, b) => (a.messageTimestamp || 0) - (b.messageTimestamp || 0));
+
     // Usa TODOS os wa_tests com respondeu=false (inclui os marcados como timeout)
     const pendingRows = await this.crmService.getAllNoResponseWaTests();
     if (!pendingRows.length) {
