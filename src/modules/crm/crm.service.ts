@@ -342,6 +342,26 @@ export class CrmService implements OnModuleInit {
     await this.supabase.from('relatorios_diarios').upsert(data, { onConflict: 'data' });
   }
 
+  // Busca leads pending_approval com dados relacionados em uma única query (evita N+1)
+  async getPendingApprovalsData(): Promise<Array<{ lead: Lead; enrichment: Enrichment | null; waTest: WaTest | null; score: Score | null }>> {
+    const { data } = await this.supabase
+      .from('leads')
+      .select('*, enrichment(*), wa_tests(*), scores(*)')
+      .eq('status', 'pending_approval')
+      .order('criado_em', { ascending: false });
+
+    return (data || []).map((row: any) => {
+      const { enrichment, wa_tests, scores, ...lead } = row;
+      const waTest = (wa_tests || []).sort((a: any, b: any) =>
+        new Date(b.enviado_em).getTime() - new Date(a.enviado_em).getTime()
+      )[0] ?? null;
+      const score = (scores || []).sort((a: any, b: any) =>
+        new Date(b.calculado_em).getTime() - new Date(a.calculado_em).getTime()
+      )[0] ?? null;
+      return { lead, enrichment: enrichment?.[0] ?? null, waTest, score };
+    });
+  }
+
   async getPendingWaTests(): Promise<Array<{ id: string; lead_id: string; numero_testado: string; enviado_em: string }>> {
     const { data } = await this.supabase
       .from('wa_tests')

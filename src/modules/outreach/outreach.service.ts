@@ -188,6 +188,13 @@ export class OutreachService {
 
     const updateField: any = {};
     updateField[`msg${msgNumber}_enviada_em`] = new Date().toISOString();
+
+    // Após a última mensagem sem resposta, marca outreach como perdido
+    if (msgNumber === 4) {
+      updateField.status = 'perdido';
+      this.logger.log(`Lead ${lead.nome} marcado como perdido após última mensagem de follow-up`);
+    }
+
     await this.crmService.updateOutreach(outreach.id, updateField);
 
     this.logger.log(`Follow-up ${msgNumber} enviado para ${lead.nome}`);

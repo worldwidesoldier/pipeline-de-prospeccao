@@ -32,18 +32,7 @@ export class DashboardService {
   }
 
   async getPendingApprovals(): Promise<any[]> {
-    const leads = await this.crmService.getLeadsByStatus('pending_approval');
-    const result = await Promise.all(
-      leads.map(async (lead) => {
-        const [enrichment, waTest, score] = await Promise.all([
-          this.crmService.getEnrichmentByLeadId(lead.id),
-          this.crmService.getLatestWaTestByLeadId(lead.id),
-          this.crmService.getScoreByLeadId(lead.id),
-        ]);
-        return { lead, enrichment, waTest, score };
-      })
-    );
-    return result;
+    return this.crmService.getPendingApprovalsData();
   }
 
   async getLeads(status?: string, search?: string, page = 1, limit = 20, campaign_id?: string): Promise<any> {

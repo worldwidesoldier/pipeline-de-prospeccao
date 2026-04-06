@@ -16,3 +16,16 @@ export class WaTesterProcessor {
     return { ok: true };
   }
 }
+
+@Processor('webhook_queue')
+export class WebhookProcessor {
+  private readonly logger = new Logger(WebhookProcessor.name);
+
+  constructor(private waTesterService: WaTesterService) {}
+
+  @Process('process_webhook')
+  async handleWebhook(job: Job<{ body: any }>) {
+    await this.waTesterService.handleWebhook(job.data.body);
+    return { ok: true };
+  }
+}
