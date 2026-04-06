@@ -5,6 +5,8 @@ import axios from 'axios';
 import { DashboardService } from './dashboard.service';
 import { ScraperService } from '../scraper/scraper.service';
 import { TemplateStore } from '../wa-tester/wa-tester.service';
+import { OutreachTemplateStore } from '../outreach/outreach.service';
+import { ActivityService } from '../activity/activity.service';
 
 const EVO_URL = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
 const EVO_KEY = process.env.EVOLUTION_API_KEY || '';
@@ -15,6 +17,7 @@ export class DashboardController {
   constructor(
     private dashboardService: DashboardService,
     private scraperService: ScraperService,
+    private activityService: ActivityService,
   ) {}
 
   @Get('/')
@@ -37,8 +40,17 @@ export class DashboardController {
     @Query('search') search?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('campaign_id') campaign_id?: string,
   ) {
-    return this.dashboardService.getLeads(status, search, page ? parseInt(page) : 1, limit ? parseInt(limit) : 20);
+    return this.dashboardService.getLeads(status, search, page ? parseInt(page) : 1, limit ? parseInt(limit) : 20, campaign_id);
+  }
+
+  @Get('api/campaigns')
+  async getCampaigns() { return this.dashboardService.getCampaigns(); }
+
+  @Get('api/activity/recent')
+  getActivity(@Query('limit') limit?: string) {
+    return this.activityService.getRecent(limit ? parseInt(limit) : 50);
   }
 
   @Post('api/leads/:id/approve')
@@ -47,8 +59,26 @@ export class DashboardController {
   @Post('api/leads/:id/discard')
   discardLead(@Param('id') id: string) { return this.dashboardService.discardLead(id); }
 
+  @Get('api/kanban')
+  async getKanban() { return this.dashboardService.getKanbanData(); }
+
+  @Post('api/leads/:id/convert')
+  convertLead(@Param('id') id: string) { return this.dashboardService.convertLead(id); }
+
   @Post('api/leads/re-enrich-discarded')
   reEnrichDiscarded() { return this.dashboardService.reEnrichDiscarded(); }
+
+  @Post('api/leads/requeue-for-wa-test')
+  requeueForWaTest() { return this.dashboardService.requeueEnrichedLeads(); }
+
+  @Post('api/leads/requeue-novo')
+  requeueNovo() { return this.dashboardService.requeueNovoLeads(); }
+
+  @Delete('api/leads/all')
+  deleteAllLeads() { return this.dashboardService.deleteAllLeads(); }
+
+  @Delete('api/leads/:id')
+  deleteLead(@Param('id') id: string) { return this.dashboardService.deleteLead(id); }
 
   // ── SCRAPER ──────────────────────────────────────────────────
 
@@ -83,12 +113,27 @@ export class DashboardController {
     return { ok: TemplateStore.delete(id) };
   }
 
+  // ── OUTREACH TEMPLATES ────────────────────────────────────────
+
+  @Get('api/outreach-templates')
+  getOutreachTemplates() { return OutreachTemplateStore.get(); }
+
+  @Put('api/outreach-templates/:variant')
+  updateOutreachTemplate(
+    @Param('variant') variant: string,
+    @Body() body: { nome: string; texto: string },
+  ) {
+    if (!['v1', 'v2', 'v3'].includes(variant)) return { error: 'Variante inválida' };
+    if (!body.nome?.trim() || !body.texto?.trim()) return { error: 'Nome e texto são obrigatórios' };
+    return OutreachTemplateStore.updateVariant(variant as 'v1' | 'v2' | 'v3', body.nome.trim(), body.texto.trim());
+  }
+
   @Get('api/scraper/jobs')
   getJobs() { return this.scraperService.getJobs(); }
 
   @Get('api/scraper/jobs/:id')
-  getJob(@Param('id') id: string) {
-    const job = this.scraperService.getJob(id);
+  async getJob(@Param('id') id: string) {
+    const job = await this.scraperService.getJob(id);
     return job || { error: 'Job não encontrado' };
   }
 

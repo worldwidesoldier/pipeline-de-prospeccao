@@ -73,7 +73,7 @@ export class CrmService implements OnModuleInit {
   }
 
   async getLeadsFiltered(
-    filters: { status?: string; search?: string },
+    filters: { status?: string; search?: string; campaign_id?: string },
     page = 1,
     limit = 20,
   ): Promise<Lead[]> {
@@ -85,6 +85,7 @@ export class CrmService implements OnModuleInit {
 
     if (filters.status) query = query.eq('status', filters.status);
     if (filters.search) query = query.ilike('nome', `%${filters.search}%`);
+    if (filters.campaign_id) query = query.eq('campaign_id', filters.campaign_id);
 
     const { data } = await query;
     // Flatten scores relation into score_total field
@@ -95,16 +96,105 @@ export class CrmService implements OnModuleInit {
     }));
   }
 
-  async countLeads(filters: { status?: string; search?: string }): Promise<number> {
+  async countLeads(filters: { status?: string; search?: string; campaign_id?: string }): Promise<number> {
     let query = this.supabase
       .from('leads')
       .select('*', { count: 'exact', head: true });
 
     if (filters.status) query = query.eq('status', filters.status);
     if (filters.search) query = query.ilike('nome', `%${filters.search}%`);
+    if (filters.campaign_id) query = query.eq('campaign_id', filters.campaign_id);
 
     const { count } = await query;
     return count || 0;
+  }
+
+  async getCampaignStats(): Promise<any[]> {
+    const jobs = await this.getScrapeJobs();
+    if (!jobs.length) return [];
+
+    const { data } = await this.supabase
+      .from('leads')
+      .select('campaign_id, status, whatsapp')
+      .not('campaign_id', 'is', null);
+
+    const leads = data || [];
+    const contatadosSet = new Set(['tested', 'scored', 'pending_approval', 'approved', 'outreach', 'convertido']);
+    const respondidosSet = new Set(['approved', 'outreach', 'convertido']);
+
+    return jobs.map(job => {
+      const jl = leads.filter(l => l.campaign_id === job.id);
+      return {
+        ...job,
+        leads_total: jl.length,
+        leads_wa: jl.filter(l => l.whatsapp).length,
+        leads_contatados: jl.filter(l => contatadosSet.has(l.status)).length,
+        leads_respondidos: jl.filter(l => respondidosSet.has(l.status)).length,
+      };
+    });
+  }
+
+  async deleteLead(id: string): Promise<void> {
+    // Deletar tabelas relacionadas primeiro
+    await Promise.all([
+      this.supabase.from('wa_tests').delete().eq('lead_id', id),
+      this.supabase.from('enrichment').delete().eq('lead_id', id),
+      this.supabase.from('scores').delete().eq('lead_id', id),
+      this.supabase.from('outreach').delete().eq('lead_id', id),
+    ]);
+    await this.supabase.from('leads').delete().eq('id', id);
+  }
+
+  async getKanbanLeads(): Promise<{ minerados: any[]; waEncontrado: any[]; contatados: any[]; respondidos: any[]; fechados: any[] }> {
+    const { data } = await this.supabase
+      .from('leads')
+      .select('*, scores(score_total), outreach(respondeu, status), wa_tests(respondeu, tempo_resposta_min, is_bot)')
+      .not('status', 'in', '("descartado","descartado_bot")')
+      .order('criado_em', { ascending: false })
+      .limit(500);
+
+    const leads = (data || []).map((l: any) => {
+      const waTest = l.wa_tests?.[0] ?? null;
+      return {
+        ...l,
+        score_total: l.scores?.[0]?.score_total ?? null,
+        outreach_respondeu: l.outreach?.[0]?.respondeu ?? false,
+        outreach_status: l.outreach?.[0]?.status ?? null,
+        wa_respondeu: waTest?.respondeu ?? null,
+        wa_tempo_resposta_min: waTest?.tempo_resposta_min ?? null,
+        wa_is_bot: waTest?.is_bot ?? false,
+        scores: undefined,
+        outreach: undefined,
+        wa_tests: undefined,
+      };
+    });
+
+    const contatadosStatuses = ['tested', 'scored', 'pending_approval', 'approved', 'outreach'];
+
+    const minerados     = leads.filter((l: any) => l.status === 'novo');
+    const waEncontrado  = leads.filter((l: any) => l.status === 'enriched' || l.status === 'sem_whatsapp_fixo');
+    const contatados    = leads.filter((l: any) => contatadosStatuses.includes(l.status) && !l.outreach_respondeu && l.outreach_status !== 'convertido');
+    const respondidos   = leads.filter((l: any) => l.outreach_respondeu === true && l.outreach_status !== 'convertido');
+    const fechados      = leads.filter((l: any) => l.outreach_status === 'convertido');
+
+    return { minerados, waEncontrado, contatados, respondidos, fechados };
+  }
+
+  async deleteAllLeads(): Promise<{ deleted: number }> {
+    const { count } = await this.supabase
+      .from('leads')
+      .select('*', { count: 'exact', head: true });
+    const total = count || 0;
+    // Limpar todas as tabelas relacionadas primeiro
+    await Promise.all([
+      this.supabase.from('wa_tests').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+      this.supabase.from('enrichment').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+      this.supabase.from('scores').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+      this.supabase.from('outreach').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+    ]);
+    await this.supabase.from('leads').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    this.logger.log(`Todos os leads deletados (${total} registros)`);
+    return { deleted: total };
   }
 
   // ─── ENRICHMENT ──────────────────────────────────────────────
@@ -251,9 +341,87 @@ export class CrmService implements OnModuleInit {
   async saveRelatorio(data: any): Promise<void> {
     await this.supabase.from('relatorios_diarios').upsert(data, { onConflict: 'data' });
   }
+
+  async getPendingWaTests(): Promise<Array<{ id: string; lead_id: string; numero_testado: string; enviado_em: string }>> {
+    const { data } = await this.supabase
+      .from('wa_tests')
+      .select('id, lead_id, numero_testado, enviado_em')
+      .eq('respondeu', false)
+      .is('tempo_resposta_min', null); // Exclui entradas já processadas como sem-resposta
+    return data || [];
+  }
+
+  async getAllNoResponseWaTests(): Promise<Array<{ id: string; lead_id: string; numero_testado: string; enviado_em: string }>> {
+    // Retorna TODOS os testes marcados como sem-resposta (inclui os que tiveram timeout)
+    const { data } = await this.supabase
+      .from('wa_tests')
+      .select('id, lead_id, numero_testado, enviado_em')
+      .eq('respondeu', false);
+    return data || [];
+  }
+
+  async countTodayWaTests(): Promise<number> {
+    const today = new Date().toISOString().split('T')[0];
+    const { count } = await this.supabase
+      .from('wa_tests')
+      .select('*', { count: 'exact', head: true })
+      .gte('enviado_em', today);
+    return count || 0;
+  }
+
+  async findLeadByName(nome: string): Promise<Lead | null> {
+    const { data } = await this.supabase
+      .from('leads')
+      .select('*')
+      .ilike('nome', nome.trim())
+      .limit(1)
+      .maybeSingle();
+    return data || null;
+  }
+
+  // ─── SCRAPER JOBS ──────────────────────────────────────────────
+
+  async createScrapeJob(job: ScrapeJobRow): Promise<void> {
+    const { error } = await this.supabase.from('scraper_jobs').insert(job);
+    if (error) this.logger.error('Erro ao criar scraper job:', error.message);
+  }
+
+  async updateScrapeJob(id: string, data: Partial<ScrapeJobRow>): Promise<void> {
+    const { error } = await this.supabase.from('scraper_jobs').update(data).eq('id', id);
+    if (error) this.logger.error(`Erro ao atualizar scraper job ${id}:`, error.message);
+  }
+
+  async getScrapeJobs(): Promise<ScrapeJobRow[]> {
+    const { data } = await this.supabase
+      .from('scraper_jobs')
+      .select('*')
+      .order('started_at', { ascending: false })
+      .limit(50);
+    return data || [];
+  }
+
+  async getScrapeJobById(id: string): Promise<ScrapeJobRow | null> {
+    const { data } = await this.supabase
+      .from('scraper_jobs')
+      .select('*')
+      .eq('id', id)
+      .single();
+    return data || null;
+  }
 }
 
 // ─── TIPOS ────────────────────────────────────────────────────
+
+export interface ScrapeJobRow {
+  id: string;
+  query: string;
+  status: 'running' | 'done' | 'error';
+  leads_found: number;
+  leads_new: number;
+  started_at: string;
+  finished_at?: string;
+  error?: string;
+}
 
 interface Lead {
   id: string;
@@ -296,6 +464,7 @@ interface WaTest {
   respondeu: boolean;
   qualidade_resposta: number;
   resposta_texto: string;
+  is_bot?: boolean; // requer coluna na tabela wa_tests: ALTER TABLE wa_tests ADD COLUMN is_bot boolean DEFAULT false;
 }
 
 interface Score {
