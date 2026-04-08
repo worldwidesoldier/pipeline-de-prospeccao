@@ -110,7 +110,7 @@ export class ScraperService {
 
   private async runScraper(query: string, max: number): Promise<any[]> {
     return new Promise((resolve) => {
-      const scriptPath = path.join(__dirname, '../../../src/scripts/scraper.py');
+      const scriptPath = path.join(__dirname, '../../../outscraper_scraper.py');
       const proc = spawn('python3', [scriptPath, query, '--max', String(max)], {
         timeout: 300000, // 5 min
       });

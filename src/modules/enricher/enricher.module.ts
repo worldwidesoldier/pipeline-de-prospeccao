@@ -7,8 +7,7 @@ import { CrmModule } from '../crm/crm.module';
 @Module({
   imports: [
     BullModule.registerQueue({ name: 'enrichment_queue' }),
-    BullModule.registerQueue({ name: 'wa_test_queue' }),
-    BullModule.registerQueue({ name: 'scoring_queue' }),
+    BullModule.registerQueue({ name: 'intel_queue' }),
     CrmModule,
   ],
   providers: [EnricherService, EnricherProcessor],

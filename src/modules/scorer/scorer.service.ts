@@ -62,8 +62,8 @@ export class ScorerService {
       });
       this.logger.log(`Lead ${lead.nome} → inbox (score ${scoreTotal})`);
     } else {
-      await this.crmService.updateLead(leadId, { status: 'descartado' });
-      this.logger.log(`Lead ${lead.nome} descartado (sem WhatsApp)`);
+      await this.crmService.updateLead(leadId, { status: 'sem_whatsapp' });
+      this.logger.log(`Lead ${lead.nome} sem WhatsApp confirmado (score salvo, aguarda canal alternativo)`);
     }
   }
 

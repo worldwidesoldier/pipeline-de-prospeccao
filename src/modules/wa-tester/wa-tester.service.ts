@@ -205,7 +205,7 @@ export class WaTesterService implements OnModuleInit {
       const nextUtcMs = nextBr.getTime() + 3 * 3600000;
       const delay = nextUtcMs - Date.now();
       this.logger.log(`Fora do horário BR — reagendando ${lead.nome} para ${nextBr.toLocaleString('pt-BR')}`);
-      await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, { delay });
+      await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, { delay, attempts: 3, backoff: { type: 'exponential', delay: 5000 } });
       return;
     }
 
@@ -222,7 +222,7 @@ export class WaTesterService implements OnModuleInit {
       const nextUtcMs = nextBr.getTime() + 3 * 3600000;
       const delay = nextUtcMs - Date.now();
       this.logger.log(`Limite diário atingido (${todayCount}/${maxDaily}) — reagendando ${lead.nome} para amanhã`);
-      await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, { delay });
+      await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, { delay, attempts: 3, backoff: { type: 'exponential', delay: 5000 } });
       return;
     }
 
@@ -235,7 +235,7 @@ export class WaTesterService implements OnModuleInit {
     if (this.lastSentAt > 0 && sinceLastSend < randomDelay) {
       const waitMs = randomDelay - sinceLastSend;
       this.logger.log(`Rate limit: próximo envio para ${lead.nome} em ${Math.round(waitMs / 1000)}s`);
-      await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, { delay: waitMs });
+      await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, { delay: waitMs, attempts: 3, backoff: { type: 'exponential', delay: 5000 } });
       return;
     }
     this.lastSentAt = now;

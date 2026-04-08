@@ -67,6 +67,7 @@ export function statusConfig(status: string): { label: string; cls: string } {
     outreach:         { label: 'Outreach',        cls: 'bg-cyan-500/15 text-cyan-400' },
     descartado:          { label: 'Descartado',      cls: 'bg-surface2 text-muted' },
     descartado_bot:      { label: 'Tem bot',         cls: 'bg-purple-500/15 text-purple-400' },
+    sem_whatsapp:        { label: 'Sem WhatsApp',    cls: 'bg-slate-500/15 text-slate-400' },
     sem_whatsapp_fixo:   { label: 'Só número fixo',  cls: 'bg-sky-500/15 text-sky-400' },
   }
   return map[status] ?? { label: status, cls: 'bg-surface2 text-muted' }

@@ -22,6 +22,7 @@ export const defaultBullOptions: BullModuleOptions = {
 export const QUEUE_NAMES = {
   SCRAPER: 'scraper_queue',
   ENRICHMENT: 'enrichment_queue',
+  INTEL: 'intel_queue',
   WA_TEST: 'wa_test_queue',
   SCORING: 'scoring_queue',
   APPROVAL: 'approval_queue',

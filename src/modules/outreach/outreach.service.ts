@@ -38,6 +38,43 @@ Somos da Fair Assist — bot no WhatsApp que responde cotações na hora, tira d
   },
 };
 
+// ── Followup Template Store ──────────────────────────────────────
+export interface FollowupTemplates {
+  msg2: string;
+  msg3: string;
+  msg4: string;
+}
+
+const FOLLOWUP_TEMPLATES_FILE = path.join(process.cwd(), 'data', 'followup-templates.json');
+
+const DEFAULT_FOLLOWUP_TEMPLATES: FollowupTemplates = {
+  msg2: `Oi [Nome]! Só passando pra ver se você viu minha mensagem anterior.\n\nA gente atende casas de câmbio no Sul e os clientes adoraram — o bot responde enquanto a equipe dorme. 😄\n\nTopa testar 7 dias grátis?`,
+  msg3: `Oi [Nome], última tentativa da minha parte!\n\nSe tiver interesse em automatizar o atendimento do WhatsApp de vocês, é só me responder aqui.\n\n7 dias grátis, sem cartão, sem compromisso.`,
+  msg4: `Tudo bem [Nome]! Vou deixar você em paz depois dessa. 😊\n\nSe um dia quiser ver como o bot funciona na prática, é só chamar.\n\nAbraço, Vitor — Fair Assist`,
+};
+
+export class FollowupTemplateStore {
+  static load(): FollowupTemplates {
+    try {
+      fs.mkdirSync(path.dirname(FOLLOWUP_TEMPLATES_FILE), { recursive: true });
+      return JSON.parse(fs.readFileSync(FOLLOWUP_TEMPLATES_FILE, 'utf8'));
+    } catch {
+      return DEFAULT_FOLLOWUP_TEMPLATES;
+    }
+  }
+  static save(t: FollowupTemplates): void {
+    fs.mkdirSync(path.dirname(FOLLOWUP_TEMPLATES_FILE), { recursive: true });
+    fs.writeFileSync(FOLLOWUP_TEMPLATES_FILE, JSON.stringify(t, null, 2));
+  }
+  static get(): FollowupTemplates { return this.load(); }
+  static updateMsg(msg: 'msg2' | 'msg3' | 'msg4', texto: string): FollowupTemplates {
+    const t = this.load();
+    t[msg] = texto;
+    this.save(t);
+    return t;
+  }
+}
+
 export class OutreachTemplateStore {
   static load(): OutreachTemplates {
     try {
@@ -172,17 +209,16 @@ export class OutreachService {
     }
 
     const nome = lead.nome.split(' ')[0];
-    let mensagem = '';
+    const followupTemplates = FollowupTemplateStore.get();
 
-    if (msgNumber === 2) {
-      mensagem = `Oi ${nome}! Só passando pra ver se você viu minha mensagem anterior.\n\nA gente atende casas de câmbio no Sul e os clientes adoraram — o bot responde enquanto a equipe dorme. 😄\n\nTopa testar 7 dias grátis?`;
-    } else if (msgNumber === 3) {
-      mensagem = `Oi ${nome}, última tentativa da minha parte!\n\nSe tiver interesse em automatizar o atendimento do WhatsApp de vocês, é só me responder aqui.\n\n7 dias grátis, sem cartão, sem compromisso.`;
-    } else if (msgNumber === 4) {
-      mensagem = `Tudo bem ${nome}! Vou deixar você em paz depois dessa. 😊\n\nSe um dia quiser ver como o bot funciona na prática, é só chamar.\n\nAbraço, Vitor — Fair Assist`;
-    }
-
-    if (!mensagem) return;
+    const templateMap: Record<number, string> = {
+      2: followupTemplates.msg2,
+      3: followupTemplates.msg3,
+      4: followupTemplates.msg4,
+    };
+    const raw = templateMap[msgNumber];
+    if (!raw) return;
+    const mensagem = raw.replace(/\[Nome\]/g, nome);
 
     await this.sendEvolutionMessage(lead.whatsapp, mensagem);
 

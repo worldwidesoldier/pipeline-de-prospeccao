@@ -56,6 +56,9 @@ export const api = {
   getOutreachTemplates: () => req<OutreachTemplates>('/api/outreach-templates'),
   updateOutreachTemplate: (variant: string, body: { nome: string; texto: string }) =>
     put<OutreachTemplates>(`/api/outreach-templates/${variant}`, body),
+  getFollowupTemplates: () => req<{ msg2: string; msg3: string; msg4: string }>('/api/followup-templates'),
+  updateFollowupTemplate: (msg: string, texto: string) =>
+    put<{ msg2: string; msg3: string; msg4: string }>(`/api/followup-templates/${msg}`, { texto }),
   triggerScrape:       (body: { query: string; max: number; templateId?: string }) => post('/api/scraper/trigger', body),
   getJobs:             () => req<ScraperJob[]>('/api/scraper/jobs'),
   getKanban:           () => req<KanbanData>('/api/kanban'),

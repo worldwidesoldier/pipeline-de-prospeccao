@@ -13,8 +13,7 @@ export class EnricherService {
   private readonly openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   constructor(
-    @InjectQueue('wa_test_queue') private waTestQueue: Queue,
-    @InjectQueue('scoring_queue') private scoringQueue: Queue,
+    @InjectQueue('intel_queue') private intelQueue: Queue,
     private crmService: CrmService,
     private activity: ActivityService,
   ) {}
@@ -60,6 +59,13 @@ export class EnricherService {
         if (siteData.instagramUsername) {
           igUsernameFromSite = siteData.instagramUsername;
           this.logger.log(`Instagram encontrado no site: @${igUsernameFromSite}`);
+        }
+        if (siteData.email) {
+          enrichmentData.email = siteData.email;
+          this.logger.log(`Email encontrado no site: ${siteData.email}`);
+        }
+        if (siteData.facebookUrl) {
+          enrichmentData.facebook_url = siteData.facebookUrl;
         }
       } catch (e) {
         this.logger.warn(`Erro ao crawlar site ${lead.site}: ${e.message}`);
@@ -108,39 +114,36 @@ export class EnricherService {
     // 4. Salvar enrichment
     await this.crmService.saveEnrichment(enrichmentData);
 
-    // 5. Atualizar lead com WhatsApp encontrado
+    // 5. Atualizar lead com WhatsApp encontrado + email/facebook do site
     const updateData: any = {
       whatsapp: whatsapp,
       whatsapp_source: whatsappSource,
+      ...(enrichmentData.email && { email: enrichmentData.email }),
+      ...(enrichmentData.facebook_url && { facebook_url: enrichmentData.facebook_url }),
     };
 
-    // 6. Rotear para próxima fila
+    // 6. Definir status e rotear para intel_queue (sempre)
     if (whatsapp) {
       updateData.status = 'enriched';
-      await this.crmService.updateLead(leadId, updateData);
-      await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, {
-        attempts: 2,
-        backoff: { type: 'fixed', delay: 30000 },
-      });
-      this.activity.log('enriched', `WA encontrado via ${whatsappSource} — enfileirando teste`, lead.nome);
-      this.logger.log(`Lead ${lead.nome} → wa_test_queue (${whatsappSource})`);
+      this.activity.log('enriched', `WA encontrado via ${whatsappSource}`, lead.nome);
     } else if (temNumeroFixo) {
-      // Tem número fixo mas sem WhatsApp — guardar para contato por ligação
       updateData.status = 'sem_whatsapp_fixo';
-      await this.crmService.updateLead(leadId, updateData);
-      this.logger.log(`Lead ${lead.nome} → sem_whatsapp_fixo (número fixo: ${lead.telefone_google})`);
     } else {
-      updateData.status = 'enriched';
-      await this.crmService.updateLead(leadId, updateData);
-      await this.scoringQueue.add('score_lead', { leadId }, {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 5000 },
-      });
-      this.logger.log(`Lead ${lead.nome} → scoring_queue (sem WhatsApp, sem fixo)`);
+      updateData.status = 'sem_whatsapp';
     }
+
+    await this.crmService.updateLead(leadId, updateData);
+
+    // Intel roda para todos: busca reviews, emails e contatos via Outscraper
+    // Depois do intel o IntelProcessor roteia para wa_test ou scoring conforme o status
+    await this.intelQueue.add('run_intel', { leadId, templateId }, {
+      attempts: 2,
+      backoff: { type: 'exponential', delay: 10000 },
+    });
+    this.logger.log(`Lead ${lead.nome} (${updateData.status}) → intel_queue`);
   }
 
-  private async crawlSite(url: string): Promise<{ score: number; resumo: string; whatsapp: string | null; instagramUsername: string | null }> {
+  private async crawlSite(url: string): Promise<{ score: number; resumo: string; whatsapp: string | null; instagramUsername: string | null; email: string | null; facebookUrl: string | null }> {
     // Usar Crawl4AI via subprocess Python
     return new Promise((resolve) => {
       const script = `
@@ -175,6 +178,28 @@ def extract_ig(md):
         return None
     return username
 
+def extract_email(md, html):
+    # 1. mailto: links (most reliable)
+    m = re.search(r'mailto:([a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,})', html or '', re.IGNORECASE)
+    if m: return m.group(1).lower()
+    # 2. plain text email in markdown
+    m = re.search(r'\\b([a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,})\\b', md)
+    if m:
+        email = m.group(1).lower()
+        # Skip image/asset emails
+        if not re.search(r'\\.(png|jpg|gif|svg|webp|woff|css|js)$', email):
+            return email
+    return None
+
+def extract_fb(md):
+    m = re.search(r'(https?://(?:www\\.)?facebook\\.com/[^/?\\s"\'\\)\\]<>]+)', md, re.IGNORECASE)
+    if not m: return None
+    url = m.group(1).rstrip('/')
+    # Skip generic FB pages
+    skip = ('facebook.com/sharer', 'facebook.com/share', 'facebook.com/dialog', 'facebook.com/plugins')
+    if any(s in url for s in skip): return None
+    return url
+
 def extract_links(html, base_url):
     """Extract internal links that look like contact/unit pages."""
     from urllib.parse import urljoin, urlparse
@@ -206,6 +231,8 @@ async def crawl(url):
 
         wa_raw = extract_wa(md)
         ig_username = extract_ig(md)
+        email = extract_email(md, html)
+        fb_url = extract_fb(md)
 
         # If homepage is sparse (< 400 chars), try subpages
         if len(md.strip()) < 400 and result.success:
@@ -216,18 +243,25 @@ async def crawl(url):
                 sub_result = await crawler.arun(url=sub, config=config)
                 if sub_result.success:
                     sub_md = sub_result.markdown or ""
+                    sub_html = sub_result.html or ""
                     if not wa_raw:
                         wa_raw = extract_wa(sub_md)
                     if not ig_username:
                         ig_username = extract_ig(sub_md)
+                    if not email:
+                        email = extract_email(sub_md, sub_html)
+                    if not fb_url:
+                        fb_url = extract_fb(sub_md)
                     md += "\\n" + sub_md[:1000]
-                if wa_raw:
+                if wa_raw and email:
                     break
 
         print(json.dumps({
             "markdown": md[:3000],
             "whatsapp": re.sub(r'[^\\d+]', '', wa_raw) if wa_raw else None,
             "instagram_username": ig_username,
+            "email": email,
+            "facebook_url": fb_url,
         }))
 
 asyncio.run(crawl(sys.argv[1]))
@@ -269,12 +303,12 @@ asyncio.run(crawl(sys.argv[1]))
             }
           }
 
-          resolve({ score, resumo, whatsapp: data.whatsapp, instagramUsername: data.instagram_username || null });
+          resolve({ score, resumo, whatsapp: data.whatsapp, instagramUsername: data.instagram_username || null, email: data.email || null, facebookUrl: data.facebook_url || null });
         } catch {
-          resolve({ score: 0, resumo: 'Erro ao analisar site', whatsapp: null, instagramUsername: null });
+          resolve({ score: 0, resumo: 'Erro ao analisar site', whatsapp: null, instagramUsername: null, email: null, facebookUrl: null });
         }
       });
-      proc.on('error', () => resolve({ score: 0, resumo: 'Erro ao acessar site', whatsapp: null, instagramUsername: null }));
+      proc.on('error', () => resolve({ score: 0, resumo: 'Erro ao acessar site', whatsapp: null, instagramUsername: null, email: null, facebookUrl: null }));
     });
   }
 

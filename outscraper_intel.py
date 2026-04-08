@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
 """
-Sales Intelligence via Outscraper
-Coleta emails, redes sociais, reviews do Google e gera análise BANT com GPT.
+Sales Intelligence via Outscraper — Fair Assist
+Usa as APIs dedicadas:
+  • Google Maps Reviews Scraper  (/maps/reviews-v3)
+  • Emails & Contacts Scraper    (/emails-and-contacts)
+
+Fluxo por lead:
+  1. maps/search-v3 (limit=1, sem reviews) → place_id, site, dados básicos
+  2. maps/reviews-v3 com place_id          → reviews completas
+  3. emails-and-contacts com site          → emails + redes sociais enriquecidas
+  4. GPT analisa reviews                  → is_hot, pain_points, ai_summary
+  5. Supabase update
 
 Uso:
   python outscraper_intel.py --lead-id <UUID>
-  python outscraper_intel.py --all          # processa todos leads sem ai_summary
+  python outscraper_intel.py --all            # todos leads sem ai_summary
   python outscraper_intel.py --query "Casa de Câmbio São Paulo" --limit 20
 
-Variáveis de ambiente necessárias (.env):
+Variáveis de ambiente (.env):
   OUTSCRAPER_API_KEY=...
   OPENAI_API_KEY=...
   SUPABASE_URL=...
@@ -18,6 +27,7 @@ Variáveis de ambiente necessárias (.env):
 import os
 import sys
 import json
+import time
 import argparse
 import requests
 from openai import OpenAI
@@ -34,73 +44,134 @@ SUPABASE_KEY   = os.environ["SUPABASE_SERVICE_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 openai   = OpenAI(api_key=OPENAI_KEY)
 
+BASE_URL = "https://api.app.outscraper.com"
+HEADERS  = {"X-API-KEY": OUTSCRAPER_KEY}
 
-# ── Outscraper ─────────────────────────────────────────────────────────────
 
-def outscraper_search(query: str, limit: int = 20) -> list[dict]:
-    """Busca empresas no Google Maps via Outscraper."""
-    url = "https://api.app.outscraper.com/maps/search-v3"
+# ── Outscraper helpers ─────────────────────────────────────────────────────
+
+def _poll_job(job_id: str, max_wait: int = 180) -> dict:
+    """Aguarda job assíncrono do Outscraper (poll a cada 5s)."""
+    waited = 0
+    while waited < max_wait:
+        time.sleep(5)
+        waited += 5
+        r = requests.get(f"{BASE_URL}/requests/{job_id}", headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        if data.get("status") not in ("Pending", "Running"):
+            return data
+    raise TimeoutError(f"Job {job_id} não concluiu em {max_wait}s")
+
+
+def _get_data(response: dict) -> list:
+    """Extrai lista de dados de resposta síncrona ou assíncrona."""
+    if response.get("status") in ("Pending", "Running"):
+        response = _poll_job(response["id"])
+
+    raw = response.get("data", response) if isinstance(response, dict) else response
+
+    # Outscraper v3 retorna list[list] (uma sublista por query) ou list[dict]
+    if raw and isinstance(raw, list) and isinstance(raw[0], list):
+        raw = raw[0]
+
+    return raw or []
+
+
+def maps_find(query: str) -> dict | None:
+    """
+    Busca um lugar no Google Maps (sem reviews) para obter place_id e site.
+    Retorna o primeiro resultado ou None.
+    """
     params = {
-        "query":           query,
-        "limit":           limit,
-        "language":        "pt",
-        "region":          "BR",
-        "reviewsLimit":    50,
-        "fields":          "name,full_address,city,state,postal_code,phone,site,email,social_networks,rating,reviews,reviews_data",
-    }
-    headers = {"X-API-KEY": OUTSCRAPER_KEY}
-    r = requests.get(url, params=params, headers=headers, timeout=60)
-    r.raise_for_status()
-    data = r.json()
-    # Outscraper retorna {"data": [...]}
-    return data.get("data", []) if isinstance(data, dict) else data
-
-
-def outscraper_by_place_id(place_id: str) -> dict | None:
-    """Busca dados de um lugar específico pelo Place ID."""
-    url = "https://api.app.outscraper.com/maps/search-v3"
-    params = {
-        "query":        place_id,
+        "query":        query,
         "limit":        1,
         "language":     "pt",
-        "reviewsLimit": 50,
-        "fields":       "name,full_address,city,state,postal_code,phone,site,email,social_networks,rating,reviews,reviews_data",
+        "region":       "BR",
+        "reviewsLimit": 0,
+        "fields":       "place_id,name,full_address,city,state,postal_code,phone,site,email,social_networks,rating,reviews",
     }
-    headers = {"X-API-KEY": OUTSCRAPER_KEY}
-    r = requests.get(url, params=params, headers=headers, timeout=60)
+    r = requests.get(f"{BASE_URL}/maps/search-v3", params=params, headers=HEADERS, timeout=60)
     r.raise_for_status()
-    data = r.json().get("data", [])
+    data = _get_data(r.json())
     return data[0] if data else None
 
 
-# ── Análise BANT com GPT ───────────────────────────────────────────────────
+def maps_reviews(place_id: str, limit: int = 50) -> list[dict]:
+    """
+    Busca reviews via API dedicada de reviews usando o place_id do Google Maps.
+    Retorna lista de reviews normalizadas.
+    """
+    params = {
+        "query":    place_id,
+        "limit":    limit,
+        "language": "pt",
+        "sort":     "newest",
+    }
+    r = requests.get(f"{BASE_URL}/maps/reviews-v3", params=params, headers=HEADERS, timeout=60)
+    r.raise_for_status()
+    raw = _get_data(r.json())
+
+    reviews = []
+    for item in raw:
+        # reviews-v3 retorna objetos com campo "reviews_data" ou diretamente review fields
+        review_list = item.get("reviews_data") or []
+        for rev in review_list[:20]:
+            reviews.append({
+                "author": rev.get("author_title") or rev.get("name") or "Anônimo",
+                "rating": rev.get("review_rating") or rev.get("rating") or 0,
+                "text":   rev.get("review_text") or rev.get("text") or "",
+                "date":   rev.get("review_datetime_utc") or rev.get("date") or "",
+            })
+    return reviews[:20]
+
+
+def emails_and_contacts(site: str) -> dict:
+    """
+    Enriquece dados de contato usando o Emails & Contacts Scraper do Outscraper.
+    Retorna dict com emails, redes sociais.
+    """
+    params = {
+        "query":  site,
+        "fields": "emails,social_networks,phones",
+    }
+    r = requests.get(f"{BASE_URL}/emails-and-contacts", params=params, headers=HEADERS, timeout=60)
+    r.raise_for_status()
+    data = _get_data(r.json())
+    return data[0] if data else {}
+
+
+# ── Análise GPT ────────────────────────────────────────────────────────────
 
 def analisar_reviews(nome: str, reviews: list[dict]) -> dict:
-    """Envia as reviews para o GPT e retorna análise BANT."""
+    """Analisa reviews com GPT e retorna is_hot, pain_points, ai_summary."""
     if not reviews:
-        return {"is_hot": False, "pain_points": [], "ai_summary": "Sem avaliações disponíveis para análise."}
+        return {
+            "is_hot": False,
+            "pain_points": [],
+            "ai_summary": "Sem avaliações disponíveis para análise.",
+        }
 
     textos = []
-    for r in reviews[:50]:
-        rating = r.get("rating", "?")
-        text   = r.get("text") or r.get("review_text") or ""
+    for rev in reviews[:50]:
+        text = rev.get("text", "").strip()
         if text:
-            textos.append(f"[{rating}★] {text[:300]}")
+            textos.append(f"[{rev.get('rating', '?')}★] {text[:300]}")
 
     reviews_str = "\n".join(textos) if textos else "Sem texto nas avaliações."
 
     prompt = f"""Você é um analista de vendas B2B especializado em identificar oportunidades de mercado.
 
-Analise as avaliações do Google da empresa "{nome}" abaixo e retorne um JSON estrito com:
-- "is_hot": true se há reclamações recorrentes sobre ATENDIMENTO LENTO, FALTA DE RESPOSTA, DEMORA, ou ERROS no processo — ou seja, problemas que uma solução como um bot de WhatsApp 24h resolveria. False caso contrário.
-- "pain_points": array de strings com as dores específicas identificadas (máx 5, em português, frases curtas e diretas)
-- "ai_summary": parágrafo de 2-3 frases resumindo o perfil do negócio e as principais oportunidades de melhoria que uma solução de automação de atendimento poderia resolver
+Analise as avaliações do Google da empresa "{nome}" e retorne um JSON estrito com:
+- "is_hot": true se há reclamações recorrentes sobre ATENDIMENTO LENTO, FALTA DE RESPOSTA, DEMORA, ou ERROS — problemas que um bot de WhatsApp 24h resolveria. False caso contrário.
+- "pain_points": array de strings com as dores específicas (máx 5, em português, frases curtas e diretas)
+- "ai_summary": parágrafo de 2-3 frases resumindo o perfil e as principais oportunidades que automação de atendimento resolveria
 
 Avaliações:
 {reviews_str}
 
 Retorne APENAS o JSON, sem explicações.
-Exemplo: {{"is_hot": true, "pain_points": ["Demora para responder", "Sem atendimento fora do horário"], "ai_summary": "Casa de câmbio com bom volume de clientes mas atendimento inconsistente..."}}"""
+Exemplo: {{"is_hot": true, "pain_points": ["Demora para responder", "Sem atendimento fora do horário"], "ai_summary": "Casa de câmbio com bom volume mas atendimento inconsistente..."}}"""
 
     response = openai.chat.completions.create(
         model="gpt-4o-mini",
@@ -121,7 +192,7 @@ def get_lead(lead_id: str) -> dict | None:
 def get_leads_sem_intel(limit: int = 50) -> list[dict]:
     res = (
         supabase.table("leads")
-        .select("id, nome, telefone_google, cidade, estado")
+        .select("id, nome, telefone_google, cidade, estado, site")
         .is_("ai_summary", "null")
         .not_.in_("status", ["descartado", "descartado_bot"])
         .limit(limit)
@@ -130,69 +201,103 @@ def get_leads_sem_intel(limit: int = 50) -> list[dict]:
     return res.data or []
 
 
-def salvar_intel(lead_id: str, outscraper_data: dict, intel: dict, reviews_raw: list) -> None:
-    socials = outscraper_data.get("social_networks") or {}
+def salvar_intel(lead_id: str, maps_data: dict, contacts: dict, intel: dict, reviews_raw: list) -> None:
+    """Consolida dados do Maps, Emails & Contacts e GPT e salva no Supabase."""
+    # Socials: prioriza emails-and-contacts (mais completo), cai back para maps
+    maps_socials     = maps_data.get("social_networks") or {}
+    contacts_socials = contacts.get("social_networks") or {}
+
+    def pick(key: str) -> str | None:
+        return contacts_socials.get(key) or maps_socials.get(key) or None
+
+    # Email: emails-and-contacts retorna lista, maps retorna string
+    raw_emails = contacts.get("emails") or []
+    email = None
+    if isinstance(raw_emails, list) and raw_emails:
+        first = raw_emails[0]
+        email = first.get("value") or first if isinstance(first, dict) else first
+    if not email:
+        email = maps_data.get("email") or None
+
     update = {
-        "email":               outscraper_data.get("email") or None,
-        "cep":                 outscraper_data.get("postal_code") or None,
-        "facebook_url":        socials.get("facebook") or None,
-        "x_url":               socials.get("twitter") or None,
-        "is_hot":              bool(intel.get("is_hot", False)),
-        "pain_points":         intel.get("pain_points", []),
-        "ai_summary":          intel.get("ai_summary", ""),
-        "google_reviews_raw":  reviews_raw[:50],
+        "email":              email,
+        "cep":                maps_data.get("postal_code") or None,
+        "instagram":          pick("instagram"),
+        "facebook_url":       pick("facebook"),
+        "x_url":              pick("twitter"),
+        "is_hot":             bool(intel.get("is_hot", False)),
+        "pain_points":        intel.get("pain_points", []),
+        "ai_summary":         intel.get("ai_summary", ""),
+        "google_reviews_raw": reviews_raw[:20],
     }
+
     # Remove Nones para não sobrescrever dados existentes com null
     update = {k: v for k, v in update.items() if v is not None}
+
     supabase.table("leads").update(update).eq("id", lead_id).execute()
-    print(f"  ✓ Lead atualizado: {update.get('email', '—')} | hot={update['is_hot']} | {len(update.get('pain_points', []))} dores")
+    print(
+        f"  ✓ Salvo: email={update.get('email', '—')} | "
+        f"instagram={'✓' if update.get('instagram') else '—'} | "
+        f"hot={update['is_hot']} | "
+        f"{len(update.get('pain_points', []))} dores | "
+        f"{len(reviews_raw)} reviews"
+    )
 
 
 # ── Processamento ──────────────────────────────────────────────────────────
 
 def processar_lead(lead: dict) -> None:
-    nome = lead["nome"]
+    nome   = lead["nome"]
     cidade = lead.get("cidade") or lead.get("estado") or "Brasil"
-    print(f"\n→ Processando: {nome} ({cidade})")
+    site   = lead.get("site")
+    print(f"\n→ {nome} ({cidade})")
 
-    query = f"{nome} {cidade}"
-    resultados = outscraper_search(query, limit=3)
-
-    if not resultados:
-        print(f"  ✗ Nenhum resultado Outscraper para: {query}")
+    # 1. Encontra o lugar no Maps para pegar place_id e site
+    query      = f"{nome} {cidade}"
+    maps_data  = maps_find(query)
+    if not maps_data:
+        print(f"  ✗ Não encontrado no Maps: {query}")
         return
 
-    # Pega o primeiro resultado (mais relevante)
-    dado = resultados[0]
-    reviews_raw = dado.get("reviews_data") or []
+    place_id  = maps_data.get("place_id")
+    site      = site or maps_data.get("site")
+    print(f"  → place_id={place_id or '—'} | site={site or '—'}")
 
-    # Normaliza formato de reviews
-    reviews_normalizados = []
-    for r in reviews_raw:
-        reviews_normalizados.append({
-            "author": r.get("author_title") or r.get("name") or "Anônimo",
-            "rating": r.get("review_rating") or r.get("rating") or 0,
-            "text":   r.get("review_text") or r.get("text") or "",
-            "date":   r.get("review_datetime_utc") or r.get("date") or "",
-        })
+    # 2. Reviews via API dedicada
+    reviews = []
+    if place_id:
+        try:
+            reviews = maps_reviews(place_id, limit=20)
+            print(f"  → {len(reviews)} reviews obtidas")
+        except Exception as e:
+            print(f"  ! Reviews falhou: {e} — usando campo rating/reviews do Maps")
 
-    print(f"  → {len(reviews_normalizados)} avaliações encontradas")
+    # 3. Emails & Contacts via site
+    contacts = {}
+    if site:
+        try:
+            contacts = emails_and_contacts(site)
+            print(f"  → contacts: {bool(contacts.get('emails'))} emails, socials={list((contacts.get('social_networks') or {}).keys())}")
+        except Exception as e:
+            print(f"  ! Emails & Contacts falhou: {e}")
 
-    intel = analisar_reviews(nome, reviews_normalizados)
+    # 4. Análise GPT
+    intel = analisar_reviews(nome, reviews)
     print(f"  → is_hot={intel.get('is_hot')} | {len(intel.get('pain_points', []))} dores")
 
-    salvar_intel(lead["id"], dado, intel, reviews_normalizados)
+    # 5. Salvar
+    salvar_intel(lead["id"], maps_data, contacts, intel, reviews)
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Outscraper Sales Intelligence para Fair Assist")
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--lead-id",  help="ID do lead específico a processar")
-    group.add_argument("--all",      action="store_true", help="Processa todos leads sem ai_summary")
-    group.add_argument("--query",    help="Busca nova query no Outscraper e importa leads")
-    parser.add_argument("--limit",   type=int, default=20, help="Limite de leads/resultados (default: 20)")
+    parser = argparse.ArgumentParser(description="Outscraper Sales Intelligence — Fair Assist")
+    group  = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--lead-id", help="ID do lead específico")
+    group.add_argument("--all",     action="store_true", help="Todos leads sem ai_summary")
+    group.add_argument("--query",   help="Busca nova no Maps e exibe resultados (não salva)")
+    parser.add_argument("--limit",  type=int, default=20, help="Limite (default: 20)")
     args = parser.parse_args()
 
     if args.lead_id:
@@ -212,10 +317,12 @@ def main():
                 print(f"  ✗ Erro em {lead['nome']}: {e}")
 
     elif args.query:
-        print(f"Buscando '{args.query}' no Outscraper (limit={args.limit})...")
-        resultados = outscraper_search(args.query, args.limit)
-        print(f"  → {len(resultados)} resultados encontrados")
-        # Aqui você pode importar os resultados diretamente para o banco se quiser
+        print(f"Buscando '{args.query}' no Maps...")
+        result = maps_find(args.query)
+        if result:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print("Nenhum resultado.")
 
 
 if __name__ == "__main__":

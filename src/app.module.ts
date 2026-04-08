@@ -7,6 +7,7 @@ import { ActivityModule } from './modules/activity/activity.module';
 import { CrmModule } from './modules/crm/crm.module';
 import { ScraperModule } from './modules/scraper/scraper.module';
 import { EnricherModule } from './modules/enricher/enricher.module';
+import { IntelModule } from './modules/intel/intel.module';
 import { WaTesterModule } from './modules/wa-tester/wa-tester.module';
 import { ScorerModule } from './modules/scorer/scorer.module';
 import { ApprovalModule } from './modules/approval/approval.module';
@@ -39,6 +40,7 @@ const redisPort = (() => {
     CrmModule,
     ScraperModule,
     EnricherModule,
+    IntelModule,
     WaTesterModule,
     ScorerModule,
     ApprovalModule,

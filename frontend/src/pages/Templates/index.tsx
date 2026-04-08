@@ -193,6 +193,92 @@ function WaSection() {
   )
 }
 
+// ── Followup Templates ─────────────────────────────────────────
+
+const FOLLOWUP_META = [
+  { key: 'msg2', label: 'Msg 2', days: '+2 dias', color: 'border-blue-500/30 bg-blue-500/5', badge: 'bg-blue-500/15 text-blue-400' },
+  { key: 'msg3', label: 'Msg 3', days: '+5 dias', color: 'border-purple-500/30 bg-purple-500/5', badge: 'bg-purple-500/15 text-purple-400' },
+  { key: 'msg4', label: 'Msg 4', days: '+7 dias (último)', color: 'border-slate-500/30 bg-slate-500/5', badge: 'bg-slate-500/15 text-slate-400' },
+] as const
+
+function FollowupCard({ label, days, color, badge, texto, onSave }: {
+  label: string; days: string; color: string; badge: string
+  texto: string; onSave: (texto: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [t, setT] = useState(texto)
+
+  const inputCls = 'bg-surface border border-brd text-white placeholder-muted px-3 py-2 rounded-lg text-[13px] outline-none focus:border-blue-500 transition-colors w-full'
+
+  return (
+    <div className={`border rounded-xl p-4 space-y-3 ${color}`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full ${badge}`}>{label}</span>
+          <span className="text-[11px] text-muted">{days}</span>
+        </div>
+        {!editing && (
+          <button onClick={() => { setEditing(true); setT(texto) }} className="text-muted hover:text-white transition-colors">
+            <Edit2 size={13} />
+          </button>
+        )}
+      </div>
+      {editing ? (
+        <>
+          <textarea value={t} onChange={e => setT(e.target.value)} rows={5} className={`${inputCls} resize-y`} />
+          <div className="flex gap-2">
+            <button
+              onClick={() => { onSave(t); setEditing(false) }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-[12px] font-semibold rounded-lg transition-colors"
+            >
+              <Save size={12} /> Salvar
+            </button>
+            <button onClick={() => setEditing(false)} className="flex items-center gap-1.5 px-3 py-1.5 bg-surface2 text-muted hover:text-white text-[12px] rounded-lg transition-colors">
+              <X size={12} /> Cancelar
+            </button>
+          </div>
+          <p className="text-[10px] text-muted">Use <code className="bg-surface2 px-1 rounded">[Nome]</code> como variável.</p>
+        </>
+      ) : (
+        <p className="text-[12px] text-muted leading-relaxed italic line-clamp-4 whitespace-pre-line">{texto}</p>
+      )}
+    </div>
+  )
+}
+
+function FollowupSection() {
+  const qc = useQueryClient()
+  const { data } = useQuery({ queryKey: ['followup-templates'], queryFn: api.getFollowupTemplates })
+
+  const save = useMutation({
+    mutationFn: ({ msg, texto }: { msg: string; texto: string }) =>
+      api.updateFollowupTemplate(msg, texto),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['followup-templates'] })
+      toast.success('Follow-up salvo!')
+    },
+    onError: () => toast.error('Erro ao salvar'),
+  })
+
+  if (!data) return <div className="h-32 bg-surface2 rounded-xl animate-pulse" />
+
+  return (
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-4">
+      {FOLLOWUP_META.map(m => (
+        <FollowupCard
+          key={m.key}
+          label={m.label}
+          days={m.days}
+          color={m.color}
+          badge={m.badge}
+          texto={data[m.key as keyof typeof data]}
+          onSave={texto => save.mutate({ msg: m.key, texto })}
+        />
+      ))}
+    </div>
+  )
+}
+
 export function TemplatesPage() {
   return (
     <div className="space-y-10">
@@ -200,6 +286,11 @@ export function TemplatesPage() {
         <div className="text-[11px] font-semibold text-muted uppercase tracking-wide mb-1">Templates de Pitch</div>
         <p className="text-[12px] text-muted mb-4">Mensagens enviadas após aprovação. Use <code className="bg-surface2 px-1 rounded">[Nome]</code> e <code className="bg-surface2 px-1 rounded">[X horas]</code> como variáveis.</p>
         <PitchSection />
+      </div>
+      <div>
+        <div className="text-[11px] font-semibold text-muted uppercase tracking-wide mb-1">Templates de Follow-up</div>
+        <p className="text-[12px] text-muted mb-4">Mensagens automáticas enviadas quando o lead não responde. Use <code className="bg-surface2 px-1 rounded">[Nome]</code> como variável.</p>
+        <FollowupSection />
       </div>
       <div>
         <div className="text-[11px] font-semibold text-muted uppercase tracking-wide mb-4">Templates de Mensagem WA (Mystery Shop)</div>

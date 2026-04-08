@@ -5,7 +5,7 @@ import axios from 'axios';
 import { DashboardService } from './dashboard.service';
 import { ScraperService } from '../scraper/scraper.service';
 import { TemplateStore } from '../wa-tester/wa-tester.service';
-import { OutreachTemplateStore } from '../outreach/outreach.service';
+import { OutreachTemplateStore, FollowupTemplateStore } from '../outreach/outreach.service';
 import { ActivityService } from '../activity/activity.service';
 
 const EVO_URL = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
@@ -134,6 +134,21 @@ export class DashboardController {
     if (!['v1', 'v2', 'v3'].includes(variant)) return { error: 'Variante inválida' };
     if (!body.nome?.trim() || !body.texto?.trim()) return { error: 'Nome e texto são obrigatórios' };
     return OutreachTemplateStore.updateVariant(variant as 'v1' | 'v2' | 'v3', body.nome.trim(), body.texto.trim());
+  }
+
+  // ── FOLLOWUP TEMPLATES ────────────────────────────────────────
+
+  @Get('api/followup-templates')
+  getFollowupTemplates() { return FollowupTemplateStore.get(); }
+
+  @Put('api/followup-templates/:msg')
+  updateFollowupTemplate(
+    @Param('msg') msg: string,
+    @Body() body: { texto: string },
+  ) {
+    if (!['msg2', 'msg3', 'msg4'].includes(msg)) return { error: 'Mensagem inválida' };
+    if (!body.texto?.trim()) return { error: 'Texto é obrigatório' };
+    return FollowupTemplateStore.updateMsg(msg as 'msg2' | 'msg3' | 'msg4', body.texto.trim());
   }
 
   @Get('api/scraper/jobs')

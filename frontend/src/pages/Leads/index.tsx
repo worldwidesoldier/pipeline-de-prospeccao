@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { StatusPill } from '@/components/shared/StatusPill'
 import { LeadDetailDrawer } from '@/components/shared/LeadDetailDrawer'
-import { Search, ChevronLeft, ChevronRight, Trash2, AlertTriangle, Flame, Globe, MessageCircle, Instagram, Facebook, Twitter, Mail, Phone, Star } from 'lucide-react'
+import { Search, ChevronLeft, ChevronRight, Trash2, AlertTriangle, Flame, Globe, MessageCircle, Instagram, Facebook, Twitter, Mail, Phone, Star, Bot } from 'lucide-react'
 
 const LIMIT = 20
 
@@ -19,6 +19,7 @@ const STATUS_OPTIONS = [
   { value: 'outreach', label: 'Outreach' },
   { value: 'descartado', label: 'Descartado' },
   { value: 'descartado_bot', label: 'Bot (descartado)' },
+  { value: 'sem_whatsapp', label: 'Sem WhatsApp' },
   { value: 'sem_whatsapp_fixo', label: '📞 Só número fixo' },
 ]
 
@@ -172,8 +173,11 @@ export function LeadsPage() {
                 data.leads.map(l => (
                   <tr key={l.id} onClick={() => setSelectedLeadId(l.id)}
                     className="border-t border-brd hover:bg-white/[0.025] transition-colors group cursor-pointer">
-                    <td className="px-3 py-2.5 w-6">
-                      {(l as any).is_hot && <Flame size={12} className="text-red-400" />}
+                    <td className="px-3 py-2.5 w-8">
+                      <div className="flex flex-col gap-0.5 items-center">
+                        {(l as any).is_hot && <span title="Lead quente"><Flame size={12} className="text-red-400" /></span>}
+                        {(l as any).wa_is_bot && <span title="Bot detectado no WA"><Bot size={12} className="text-purple-400" /></span>}
+                      </div>
                     </td>
                     <td className="px-3 py-2.5 font-medium text-white whitespace-nowrap max-w-[160px] truncate">{l.nome}</td>
                     <td className="px-3 py-2.5 text-muted max-w-[150px] truncate">{l.endereco || '—'}</td>
@@ -206,7 +210,19 @@ export function LeadsPage() {
                           </span>
                         : <span className="text-muted">—</span>}
                     </td>
-                    <td className="px-3 py-2.5"><StatusPill status={l.status} /></td>
+                    <td className="px-3 py-2.5">
+                      <StatusPill status={l.status} />
+                      {l.status === 'outreach' && (
+                        <div className="text-[10px] text-muted mt-0.5">
+                          {(l as any).outreach_respondeu
+                            ? `Respondeu · ${(l as any).outreach_interesse || 'médio'}`
+                            : (l as any).outreach_msg4 ? 'Msg 4 · último'
+                            : (l as any).outreach_msg3 ? 'Msg 3 enviada'
+                            : (l as any).outreach_msg2 ? 'Msg 2 enviada'
+                            : 'Msg 1 enviada'}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-3 py-2.5">
                       <button onClick={e => { e.stopPropagation(); deleteLead.mutate(l.id) }}
                         className="opacity-0 group-hover:opacity-100 p-1.5 text-muted hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all" title="Deletar lead">

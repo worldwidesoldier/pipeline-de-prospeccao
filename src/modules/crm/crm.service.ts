@@ -79,7 +79,7 @@ export class CrmService implements OnModuleInit {
   ): Promise<Lead[]> {
     let query = this.supabase
       .from('leads')
-      .select('*, scores(score_total)')
+      .select('*, scores(score_total), wa_tests(is_bot), outreach(msg2_enviada_em, msg3_enviada_em, msg4_enviada_em, respondeu, interesse_nivel)')
       .order('criado_em', { ascending: false })
       .range((page - 1) * limit, page * limit - 1);
 
@@ -88,11 +88,18 @@ export class CrmService implements OnModuleInit {
     if (filters.campaign_id) query = query.eq('campaign_id', filters.campaign_id);
 
     const { data } = await query;
-    // Flatten scores relation into score_total field
     return (data || []).map((l: any) => ({
       ...l,
       score_total: l.scores?.[0]?.score_total ?? null,
+      wa_is_bot: l.wa_tests?.[0]?.is_bot ?? false,
+      outreach_respondeu: l.outreach?.[0]?.respondeu ?? false,
+      outreach_msg2: l.outreach?.[0]?.msg2_enviada_em ?? null,
+      outreach_msg3: l.outreach?.[0]?.msg3_enviada_em ?? null,
+      outreach_msg4: l.outreach?.[0]?.msg4_enviada_em ?? null,
+      outreach_interesse: l.outreach?.[0]?.interesse_nivel ?? null,
       scores: undefined,
+      wa_tests: undefined,
+      outreach: undefined,
     }));
   }
 
@@ -172,7 +179,7 @@ export class CrmService implements OnModuleInit {
     const contatadosStatuses = ['tested', 'scored', 'pending_approval', 'approved', 'outreach'];
 
     const minerados     = leads.filter((l: any) => l.status === 'novo');
-    const waEncontrado  = leads.filter((l: any) => l.status === 'enriched' || l.status === 'sem_whatsapp_fixo');
+    const waEncontrado  = leads.filter((l: any) => l.status === 'enriched');
     const contatados    = leads.filter((l: any) => contatadosStatuses.includes(l.status) && !l.outreach_respondeu && l.outreach_status !== 'convertido');
     const respondidos   = leads.filter((l: any) => l.outreach_respondeu === true && l.outreach_status !== 'convertido');
     const fechados      = leads.filter((l: any) => l.outreach_status === 'convertido');
