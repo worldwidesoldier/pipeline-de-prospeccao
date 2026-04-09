@@ -3,7 +3,151 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import type { CampaignStat } from '@/types/api'
-import { Play, CheckCircle, XCircle, Clock, RefreshCw, Activity, TrendingUp, RotateCcw } from 'lucide-react'
+import {
+  Play, CheckCircle, XCircle, Clock, RefreshCw, Activity, TrendingUp,
+  RotateCcw, Pause, PlayCircle, Zap, AlertTriangle, MapPin, Tag,
+} from 'lucide-react'
+
+// ─── Motor Status Card ────────────────────────────────────────────
+
+function MotorCard() {
+  const qc = useQueryClient()
+
+  const { data: motor, isLoading } = useQuery({
+    queryKey: ['motorStatus'],
+    queryFn: api.getMotorStatus,
+    refetchInterval: 8000,
+  })
+
+  const pause = useMutation({
+    mutationFn: api.pauseMotor,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['motorStatus'] })
+      toast.success('Motor pausado')
+    },
+    onError: () => toast.error('Erro ao pausar motor'),
+  })
+
+  const resume = useMutation({
+    mutationFn: api.resumeMotor,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['motorStatus'] })
+      toast.success('Motor retomado')
+    },
+    onError: () => toast.error('Erro ao retomar motor'),
+  })
+
+  const requeue = useMutation({
+    mutationFn: api.requeueWaTest,
+    onSuccess: (res) => {
+      const r = res as { queued: number }
+      toast.success(r.queued > 0 ? `${r.queued} leads re-enfileirados` : 'Nenhum lead pendente')
+    },
+    onError: () => toast.error('Erro ao re-enfileirar'),
+  })
+
+  const isPaused = motor?.status === 'paused'
+  const isAtLimit = motor ? motor.remaining === 0 : false
+
+  return (
+    <div className={`bg-surface border rounded-xl p-5 space-y-4 ${
+      isPaused ? 'border-yellow-500/40' : isAtLimit ? 'border-red-500/30' : 'border-brd'
+    }`}>
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className={`w-2 h-2 rounded-full ${
+            isLoading ? 'bg-gray-500' :
+            isPaused ? 'bg-yellow-400 animate-pulse' :
+            isAtLimit ? 'bg-red-400' :
+            'bg-green-400 animate-pulse'
+          }`} />
+          <span className="text-[13px] font-semibold text-white">Motor de Envio WA</span>
+          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+            isPaused ? 'bg-yellow-500/15 text-yellow-400'
+            : isAtLimit ? 'bg-red-500/15 text-red-400'
+            : 'bg-green-500/15 text-green-400'
+          }`}>
+            {isLoading ? '...' : isPaused ? 'Pausado' : isAtLimit ? 'Limite atingido' : 'Rodando'}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => requeue.mutate()}
+            disabled={requeue.isPending}
+            title="Re-enfileirar leads com WA que ainda não foram testados"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface2 border border-brd text-muted hover:text-white disabled:opacity-40 text-[12px] rounded-lg transition-colors"
+          >
+            <RotateCcw size={11} className={requeue.isPending ? 'animate-spin' : ''} />
+            Re-enfileirar
+          </button>
+          {isPaused ? (
+            <button
+              onClick={() => resume.mutate()}
+              disabled={resume.isPending}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-500 disabled:opacity-40 text-white font-semibold text-[12px] rounded-lg transition-colors"
+            >
+              <PlayCircle size={13} />
+              Retomar
+            </button>
+          ) : (
+            <button
+              onClick={() => pause.mutate()}
+              disabled={pause.isPending}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-600 hover:bg-yellow-500 disabled:opacity-40 text-white font-semibold text-[12px] rounded-lg transition-colors"
+            >
+              <Pause size={13} />
+              Pausar
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Metrics */}
+      <div className="grid grid-cols-4 gap-3">
+        <div className="bg-surface2 rounded-lg px-3 py-2.5 text-center">
+          <p className="text-[20px] font-bold text-white tabular-nums">{motor?.pendingCount ?? '—'}</p>
+          <p className="text-[10px] text-muted mt-0.5">Aguardando</p>
+        </div>
+        <div className="bg-surface2 rounded-lg px-3 py-2.5 text-center">
+          <p className="text-[20px] font-bold text-blue-400 tabular-nums">{motor?.todayCount ?? '—'}</p>
+          <p className="text-[10px] text-muted mt-0.5">Enviados hoje</p>
+        </div>
+        <div className="bg-surface2 rounded-lg px-3 py-2.5 text-center">
+          <p className={`text-[20px] font-bold tabular-nums ${
+            isAtLimit ? 'text-red-400' : 'text-green-400'
+          }`}>{motor?.remaining ?? '—'}</p>
+          <p className="text-[10px] text-muted mt-0.5">Restam hoje</p>
+        </div>
+        <div className="bg-surface2 rounded-lg px-3 py-2.5 text-center">
+          <p className="text-[20px] font-bold text-muted tabular-nums">{motor?.maxDaily ?? '—'}</p>
+          <p className="text-[10px] text-muted mt-0.5">Limite diário</p>
+        </div>
+      </div>
+
+      {/* Status line */}
+      {motor && (
+        <div className="flex items-center gap-4 text-[11px] text-muted">
+          {motor.lastSentAt && (
+            <span>Último envio: <span className="text-white">{new Date(motor.lastSentAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span></span>
+          )}
+          {motor.nextSendAt && !isPaused && (
+            <span className="flex items-center gap-1">
+              <Zap size={10} className="text-blue-400" />
+              Próximo por volta de: <span className="text-white">{new Date(motor.nextSendAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+            </span>
+          )}
+          {isPaused && motor.pausedAt && (
+            <span className="flex items-center gap-1 text-yellow-400">
+              <AlertTriangle size={10} />
+              Pausado desde: {new Date(motor.pausedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ─── Activity Feed ────────────────────────────────────────────────
 
@@ -71,10 +215,22 @@ function CampaignCard({ camp }: { camp: CampaignStat }) {
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-[13px] text-white truncate">{camp.query}</p>
-          <p className="text-muted text-[11px] mt-0.5">
-            {new Date(camp.started_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
-            {camp.status !== 'running' && ` · ${elapsed}`}
-          </p>
+          <div className="flex items-center gap-2 flex-wrap mt-0.5">
+            <p className="text-muted text-[11px]">
+              {new Date(camp.started_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+              {camp.status !== 'running' && ` · ${elapsed}`}
+            </p>
+            {(camp as any).location && (
+              <span className="flex items-center gap-0.5 text-[10px] text-cyan-400">
+                <MapPin size={9} />{(camp as any).location}
+              </span>
+            )}
+            {(camp as any).niche && (
+              <span className="flex items-center gap-0.5 text-[10px] text-purple-400">
+                <Tag size={9} />{(camp as any).niche}
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
           {camp.status === 'running' && <RefreshCw size={12} className="animate-spin text-yellow-400" />}
@@ -121,6 +277,10 @@ export function CampanhasPage() {
   const [query, setQuery] = useState('')
   const [max, setMax] = useState('80')
   const [templateId, setTemplateId] = useState('')
+  const [campaignName, setCampaignName] = useState('')
+  const [location, setLocation] = useState('')
+  const [niche, setNiche] = useState('')
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const qc = useQueryClient()
 
   const { data: campaigns, isLoading } = useQuery({
@@ -135,9 +295,19 @@ export function CampanhasPage() {
   })
 
   const trigger = useMutation({
-    mutationFn: () => api.triggerScrape({ query: query.trim(), max: parseInt(max), templateId: templateId || undefined }),
+    mutationFn: () => api.triggerScrape({
+      query: query.trim(),
+      max: parseInt(max),
+      templateId: templateId || undefined,
+      campaignName: campaignName.trim() || undefined,
+      location: location.trim() || undefined,
+      niche: niche.trim() || undefined,
+    }),
     onSuccess: () => {
       setQuery('')
+      setCampaignName('')
+      setLocation('')
+      setNiche('')
       qc.invalidateQueries({ queryKey: ['campaigns'] })
       toast.success('Campanha iniciada!')
     },
@@ -159,12 +329,25 @@ export function CampanhasPage() {
   const inputCls = 'bg-surface border border-brd text-white placeholder-muted px-3 py-2.5 rounded-lg text-[13px] outline-none focus:border-blue-500 transition-colors'
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* Motor status */}
+      <MotorCard />
+
       {/* New campaign form */}
       <div className="bg-surface border border-brd rounded-xl p-5 space-y-4">
-        <p className="text-muted text-[12px]">
-          Cole uma query ou URL do Google Maps. O pipeline roda completo: Maps → Site → Instagram → WA → Score → Aprovação.
-        </p>
+        <div className="flex items-center justify-between">
+          <p className="text-muted text-[12px]">
+            Cole uma query ou URL do Google Maps. O pipeline roda completo: Maps → Site → Instagram → WA → Score → Aprovação.
+          </p>
+          <button
+            onClick={() => setShowAdvanced(v => !v)}
+            className="text-[11px] text-blue-400 hover:text-blue-300 transition-colors flex-shrink-0 ml-4"
+          >
+            {showAdvanced ? 'Ocultar opções' : 'Mais opções'}
+          </button>
+        </div>
+
+        {/* Main row */}
         <div className="flex gap-3 flex-wrap">
           <input
             type="text"
@@ -201,6 +384,46 @@ export function CampanhasPage() {
             {replay.isPending ? 'Recuperando...' : 'Recuperar respostas'}
           </button>
         </div>
+
+        {/* Advanced options */}
+        {showAdvanced && (
+          <div className="grid grid-cols-3 gap-3 pt-1 border-t border-brd">
+            <div className="space-y-1">
+              <label className="text-[11px] text-muted block">Nome da campanha</label>
+              <input
+                type="text"
+                value={campaignName}
+                onChange={e => setCampaignName(e.target.value)}
+                placeholder="Ex: RS — Maio 2026"
+                className={`${inputCls} w-full`}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="flex items-center gap-1 text-[11px] text-muted">
+                <MapPin size={10} />Localização
+              </label>
+              <input
+                type="text"
+                value={location}
+                onChange={e => setLocation(e.target.value)}
+                placeholder="Ex: Porto Alegre, RS"
+                className={`${inputCls} w-full`}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="flex items-center gap-1 text-[11px] text-muted">
+                <Tag size={10} />Nicho
+              </label>
+              <input
+                type="text"
+                value={niche}
+                onChange={e => setNiche(e.target.value)}
+                placeholder="Ex: casa de câmbio"
+                className={`${inputCls} w-full`}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Main content: campaigns + activity */}

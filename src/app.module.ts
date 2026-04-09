@@ -4,6 +4,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { ConfigModule } from '@nestjs/config';
 
 import { ActivityModule } from './modules/activity/activity.module';
+import { MotorModule } from './modules/motor/motor.module';
 import { CrmModule } from './modules/crm/crm.module';
 import { ScraperModule } from './modules/scraper/scraper.module';
 import { EnricherModule } from './modules/enricher/enricher.module';
@@ -37,6 +38,7 @@ const redisPort = (() => {
       },
     }),
     ActivityModule,
+    MotorModule,
     CrmModule,
     ScraperModule,
     EnricherModule,

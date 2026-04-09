@@ -314,20 +314,30 @@ export class CrmService implements OnModuleInit {
   async getTodayStats(): Promise<RelatorioStats> {
     const today = new Date().toISOString().split('T')[0];
 
-    const [prospectados, enriquecidos, testados, aprovados, enviados, respostas] = await Promise.all([
+    const [prospectados, testados, enviados, respostas] = await Promise.all([
+      // Leads criados hoje
       this.supabase.from('leads').select('*', { count: 'exact', head: true })
         .gte('criado_em', today),
-      this.supabase.from('leads').select('*', { count: 'exact', head: true })
-        .eq('status', 'enriched').gte('criado_em', today),
+      // WA tests enviados hoje (usa tabela wa_tests — sempre preciso)
       this.supabase.from('wa_tests').select('*', { count: 'exact', head: true })
         .gte('enviado_em', today),
-      this.supabase.from('leads').select('*', { count: 'exact', head: true })
-        .eq('status', 'approved').gte('criado_em', today),
+      // Outreach enviados hoje
       this.supabase.from('outreach').select('*', { count: 'exact', head: true })
         .gte('msg1_enviada_em', today),
+      // Respostas recebidas hoje
       this.supabase.from('outreach').select('*', { count: 'exact', head: true })
         .eq('respondeu', true).gte('respondeu_em', today),
     ]);
+
+    // Enriquecidos hoje: usa tabela enrichment.atualizado_em (mais preciso que leads.criado_em)
+    const enriquecidos = await this.supabase
+      .from('enrichment').select('*', { count: 'exact', head: true })
+      .gte('atualizado_em', today);
+
+    // Aprovados: leads que tiveram outreach criado hoje (aprovação gera outreach)
+    const aprovados = await this.supabase
+      .from('outreach').select('*', { count: 'exact', head: true })
+      .gte('aprovado_em', today);
 
     const convertidos = await this.supabase
       .from('outreach').select('*', { count: 'exact', head: true })
@@ -442,6 +452,9 @@ export class CrmService implements OnModuleInit {
 export interface ScrapeJobRow {
   id: string;
   query: string;
+  campaign_name?: string;
+  location?: string | null;
+  niche?: string | null;
   status: 'running' | 'done' | 'error';
   leads_found: number;
   leads_new: number;

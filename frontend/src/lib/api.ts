@@ -59,7 +59,11 @@ export const api = {
   getFollowupTemplates: () => req<{ msg2: string; msg3: string; msg4: string }>('/api/followup-templates'),
   updateFollowupTemplate: (msg: string, texto: string) =>
     put<{ msg2: string; msg3: string; msg4: string }>(`/api/followup-templates/${msg}`, { texto }),
-  triggerScrape:       (body: { query: string; max: number; templateId?: string }) => post('/api/scraper/trigger', body),
+  triggerScrape:       (body: { query: string; max: number; templateId?: string; campaignName?: string; location?: string; niche?: string }) => post('/api/scraper/trigger', body),
+  getMotorStatus:      () => req<{ status: string; pendingCount: number; todayCount: number; maxDaily: number; remaining: number; lastSentAt: string | null; nextSendAt: string | null; pausedAt: string | null }>('/api/motor/status'),
+  pauseMotor:          () => post('/api/motor/pause'),
+  resumeMotor:         () => post('/api/motor/resume'),
+  requeueWaTest:       () => post('/api/leads/requeue-for-wa-test'),
   getJobs:             () => req<ScraperJob[]>('/api/scraper/jobs'),
   getKanban:           () => req<KanbanData>('/api/kanban'),
   convertLead:         (id: string) => post(`/api/leads/${id}/convert`),

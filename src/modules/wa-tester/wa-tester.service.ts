@@ -3,6 +3,7 @@ import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bullmq';
 import { CrmService } from '../crm/crm.service';
 import { ActivityService } from '../activity/activity.service';
+import { MotorService } from '../motor/motor.service';
 import axios from 'axios';
 import OpenAI from 'openai';
 import * as fs from 'fs';
@@ -69,14 +70,12 @@ export class WaTesterService implements OnModuleInit {
   private lidMap = new Map<string, string>();
   // Arquivo de mapa persistente: sobrevive a restarts
   private readonly LID_MAP_FILE = path.join(process.cwd(), 'data', 'lid-map.json');
-  // Timestamp do último envio — rate limiting interno
-  private lastSentAt: number = 0;
-
   constructor(
     @InjectQueue('scoring_queue') private scoringQueue: Queue,
     @InjectQueue('wa_test_queue') private waTestQueue: Queue,
     private crmService: CrmService,
     private activity: ActivityService,
+    private motor: MotorService,
   ) {}
 
   async onModuleInit() {
@@ -178,9 +177,9 @@ export class WaTesterService implements OnModuleInit {
     return new Date(utcMs - 3 * 3600000);
   }
 
-  private isBusinessHours(): boolean {
+  isBusinessHours(): boolean {
     const br = this.getBrazilDate();
-    return br.getDay() >= 1 && br.getDay() <= 5 && br.getHours() >= 8 && br.getHours() < 22;
+    return br.getDay() >= 1 && br.getDay() <= 5 && br.getHours() >= 5 && br.getHours() < 22;
   }
 
   // ── Envio de mensagem de teste ────────────────────────────────
@@ -193,14 +192,25 @@ export class WaTesterService implements OnModuleInit {
       return;
     }
 
+    // ── Pausa global do motor ──────────────────────────────────
+    if (await this.motor.isPaused()) {
+      this.logger.log(`Motor pausado — ${lead.nome} re-agendado para verificação em 2 min`);
+      await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, {
+        delay: 2 * 60 * 1000,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+      });
+      return;
+    }
+
     if (!this.isBusinessHours()) {
-      // Calcula delay até próximo dia útil 8h no horário do Brasil
+      // Calcula delay até próximo dia útil 5h no horário do Brasil
       const br = this.getBrazilDate();
       const brDay = br.getDay();
       const daysToAdd = brDay === 5 ? 3 : brDay === 6 ? 2 : 1; // sex→seg, sáb→seg, resto→+1
       const nextBr = new Date(br);
       nextBr.setDate(br.getDate() + daysToAdd);
-      nextBr.setHours(8, 0, 0, 0);
+      nextBr.setHours(5, 0, 0, 0);
       // Converte de volta para UTC real (adiciona 3h de offset Brazil→UTC)
       const nextUtcMs = nextBr.getTime() + 3 * 3600000;
       const delay = nextUtcMs - Date.now();
@@ -218,7 +228,7 @@ export class WaTesterService implements OnModuleInit {
       const daysToAdd = brDay === 5 ? 3 : brDay === 6 ? 2 : 1;
       const nextBr = new Date(br);
       nextBr.setDate(br.getDate() + daysToAdd);
-      nextBr.setHours(8, 30, 0, 0);
+      nextBr.setHours(5, 30, 0, 0);
       const nextUtcMs = nextBr.getTime() + 3 * 3600000;
       const delay = nextUtcMs - Date.now();
       this.logger.log(`Limite diário atingido (${todayCount}/${maxDaily}) — reagendando ${lead.nome} para amanhã`);
@@ -227,18 +237,20 @@ export class WaTesterService implements OnModuleInit {
     }
 
     // Rate limiting interno: intervalo aleatório 7-12 min entre envios (anti-ban)
+    // lastSentAt persiste em Redis — sobrevive a restarts
     const now = Date.now();
     const minDelay = 7 * 60 * 1000;
     const maxDelay = 12 * 60 * 1000;
     const randomDelay = minDelay + Math.floor(Math.random() * (maxDelay - minDelay));
-    const sinceLastSend = now - this.lastSentAt;
-    if (this.lastSentAt > 0 && sinceLastSend < randomDelay) {
+    const lastSentAt = await this.motor.getLastSentAt();
+    const sinceLastSend = now - lastSentAt;
+    if (lastSentAt > 0 && sinceLastSend < randomDelay) {
       const waitMs = randomDelay - sinceLastSend;
       this.logger.log(`Rate limit: próximo envio para ${lead.nome} em ${Math.round(waitMs / 1000)}s`);
       await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, { delay: waitMs, attempts: 3, backoff: { type: 'exponential', delay: 5000 } });
       return;
     }
-    this.lastSentAt = now;
+    await this.motor.setLastSentAt(now);
 
     const mensagem = templateId
       ? (TemplateStore.get(templateId) ?? await this.gerarMensagemTeste())
@@ -658,7 +670,7 @@ Retorne APENAS a mensagem, sem aspas ou explicações.`,
     const fromBrMs = toBrazilMs(from);
     let current = new Date(fromBrMs); // representa horário BR em Date local
     let totalMs = 0;
-    const BIZ_START = 8 * 60;  // 480 min
+    const BIZ_START = 5 * 60;  // 300 min
     const BIZ_END   = 22 * 60; // 1320 min
 
     while (remainingMin > 0) {
@@ -670,21 +682,21 @@ Retorne APENAS a mensagem, sem aspas ou explicações.`,
         const daysToMon = day === 0 ? 1 : 2;
         const next = new Date(current);
         next.setDate(next.getDate() + daysToMon);
-        next.setHours(8, 0, 0, 0);
+        next.setHours(5, 0, 0, 0);
         totalMs += next.getTime() - current.getTime();
         current = next;
       } else if (currentMin < BIZ_START) {
-        // Antes das 8h → pular para 8h
+        // Antes das 5h → pular para 5h
         const next = new Date(current);
-        next.setHours(8, 0, 0, 0);
+        next.setHours(5, 0, 0, 0);
         totalMs += next.getTime() - current.getTime();
         current = next;
       } else if (currentMin >= BIZ_END) {
-        // Após 22h → pular para próximo dia útil 8h
+        // Após 22h → pular para próximo dia útil 5h
         const daysToAdd = day === 5 ? 3 : 1; // sexta → segunda
         const next = new Date(current);
         next.setDate(next.getDate() + daysToAdd);
-        next.setHours(8, 0, 0, 0);
+        next.setHours(5, 0, 0, 0);
         totalMs += next.getTime() - current.getTime();
         current = next;
       } else {

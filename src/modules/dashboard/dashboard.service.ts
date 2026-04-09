@@ -3,6 +3,7 @@ import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bullmq';
 import { Cron } from '@nestjs/schedule';
 import { CrmService } from '../crm/crm.service';
+import { MotorService } from '../motor/motor.service';
 import OpenAI from 'openai';
 
 @Injectable()
@@ -16,7 +17,16 @@ export class DashboardService {
     @InjectQueue('enrichment_queue') private enrichmentQueue: Queue,
     @InjectQueue('wa_test_queue') private waTestQueue: Queue,
     private crmService: CrmService,
+    private motorService: MotorService,
   ) {}
+
+  async getMotorStatus() {
+    const maxDaily    = parseInt(process.env.WA_DAILY_LIMIT || '20');
+    const todayCount  = await this.crmService.countTodayWaTests();
+    const enriched    = await this.crmService.getLeadsByStatus('enriched');
+    const pendingCount = enriched.filter((l: any) => l.whatsapp).length;
+    return this.motorService.getSnapshot(pendingCount, todayCount, maxDaily);
+  }
 
   async getStats(): Promise<any> {
     return this.crmService.getTodayStats();
@@ -172,7 +182,9 @@ Retorne APENAS um JSON válido:
         if (waTest) continue;
 
         await this.crmService.updateLead(lead.id, { status: 'enriched' });
+        // Delay incremental de 30s entre leads re-enfileirados — evita burst inicial
         await this.waTestQueue.add('test_whatsapp', { leadId: lead.id }, {
+          delay: queued * 30_000,
           attempts: 3,
           backoff: { type: 'exponential', delay: 5000 },
         });

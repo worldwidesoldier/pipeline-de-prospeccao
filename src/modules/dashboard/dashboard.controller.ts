@@ -7,6 +7,7 @@ import { ScraperService } from '../scraper/scraper.service';
 import { TemplateStore } from '../wa-tester/wa-tester.service';
 import { OutreachTemplateStore, FollowupTemplateStore } from '../outreach/outreach.service';
 import { ActivityService } from '../activity/activity.service';
+import { MotorService } from '../motor/motor.service';
 
 const EVO_URL = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
 const EVO_KEY = process.env.EVOLUTION_API_KEY || '';
@@ -18,6 +19,7 @@ export class DashboardController {
     private dashboardService: DashboardService,
     private scraperService: ScraperService,
     private activityService: ActivityService,
+    private motorService: MotorService,
   ) {}
 
   @Get('/')
@@ -91,12 +93,45 @@ export class DashboardController {
   // ── SCRAPER ──────────────────────────────────────────────────
 
   @Post('api/scraper/trigger')
-  async triggerScrape(@Body() body: { query: string; max?: number; templateId?: string }) {
+  async triggerScrape(@Body() body: {
+    query: string;
+    max?: number;
+    templateId?: string;
+    campaignName?: string;
+    location?: string;
+    niche?: string;
+  }) {
     if (!body.query || body.query.trim().length < 3) {
       return { error: 'Query muito curta' };
     }
-    const job = await this.scraperService.triggerManualScrape(body.query.trim(), body.max || 30, body.templateId);
+    const job = await this.scraperService.triggerManualScrape(
+      body.query.trim(),
+      body.max || 30,
+      body.templateId,
+      body.campaignName?.trim(),
+      body.location?.trim(),
+      body.niche?.trim(),
+    );
     return job;
+  }
+
+  // ── MOTOR DE WA TEST ─────────────────────────────────────────
+
+  @Get('api/motor/status')
+  async getMotorStatus() {
+    return this.dashboardService.getMotorStatus();
+  }
+
+  @Post('api/motor/pause')
+  async pauseMotor() {
+    await this.motorService.pause();
+    return { ok: true, status: 'paused' };
+  }
+
+  @Post('api/motor/resume')
+  async resumeMotor() {
+    await this.motorService.resume();
+    return { ok: true, status: 'running' };
   }
 
   // ── TEMPLATES ─────────────────────────────────────────────────

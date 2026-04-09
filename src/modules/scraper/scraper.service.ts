@@ -38,10 +38,20 @@ export class ScraperService {
     return (await this.crmService.getScrapeJobById(id)) ?? undefined;
   }
 
-  async triggerManualScrape(query: string, max = 30, templateId?: string): Promise<ScrapeJob> {
+  async triggerManualScrape(
+    query: string,
+    max = 30,
+    templateId?: string,
+    campaignName?: string,
+    location?: string,
+    niche?: string,
+  ): Promise<ScrapeJob> {
     const job: ScrapeJob = {
       id: randomUUID(),
       query,
+      campaign_name: campaignName || query,
+      location: location || null,
+      niche: niche || null,
       status: 'running',
       leads_found: 0,
       leads_new: 0,
