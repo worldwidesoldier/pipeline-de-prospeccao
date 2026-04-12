@@ -154,6 +154,7 @@ export interface KanbanLead {
 export interface KanbanData {
   minerados: KanbanLead[]
   waEncontrado: KanbanLead[]
+  semWhatsapp: KanbanLead[]
   contatados: KanbanLead[]
   respondidos: KanbanLead[]
   fechados: KanbanLead[]

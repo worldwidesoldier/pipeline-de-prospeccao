@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { X, Flame, Star, Globe, Mail, Phone, Instagram, Facebook, Twitter, MessageCircle, Loader2, ExternalLink, Copy } from 'lucide-react'
+import { X, Flame, Star, Globe, Mail, Phone, Instagram, Facebook, Twitter, MessageCircle, Loader2, ExternalLink, Copy, MapPin, Send } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 
@@ -15,6 +15,7 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
   const [tab, setTab] = useState<Tab>('intel')
   const [emailContext, setEmailContext] = useState('')
   const [generatedEmail, setGeneratedEmail] = useState<{ assunto: string; corpo: string } | null>(null)
+  const [manualWa, setManualWa] = useState('')
   const qc = useQueryClient()
 
   // Reset ao trocar de lead
@@ -22,6 +23,7 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
     setTab('intel')
     setEmailContext('')
     setGeneratedEmail(null)
+    setManualWa('')
   }, [leadId])
 
   const { data: lead, isLoading } = useQuery({
@@ -36,6 +38,17 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
       try { setGeneratedEmail(JSON.parse(lead.cold_email_draft)) } catch {}
     }
   }, [lead?.cold_email_draft])
+
+  const updateWaMutation = useMutation({
+    mutationFn: () => api.updateLeadWhatsapp(leadId!, manualWa),
+    onSuccess: () => {
+      toast.success('WhatsApp salvo — enfileirado para teste')
+      setManualWa('')
+      qc.invalidateQueries({ queryKey: ['lead', leadId] })
+      qc.invalidateQueries({ queryKey: ['leads'] })
+    },
+    onError: () => toast.error('Erro ao salvar WhatsApp'),
+  })
 
   const generateMutation = useMutation({
     mutationFn: () => api.generateEmail(leadId!, emailContext),
@@ -112,6 +125,14 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
                 <span className="text-muted">({lead.google_reviews ?? 0})</span>
               </span>
             )}
+            <a
+              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([lead.nome, lead.cidade, lead.estado].filter(Boolean).join(' '))}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 px-2 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-md text-[11px] transition-colors"
+            >
+              <MapPin size={11} /> Google
+            </a>
             {lead.site && (
               <a href={lead.site} target="_blank" rel="noopener noreferrer"
                 className="flex items-center gap-1 px-2 py-1 bg-surface2 hover:bg-white/10 text-blue-400 rounded-md text-[11px] transition-colors">
@@ -187,6 +208,31 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
               {/* ── SALES INTELLIGENCE ── */}
               {tab === 'intel' && (
                 <div className="p-5 space-y-4">
+                  {/* WhatsApp manual — aparece quando lead não tem WA */}
+                  {lead && !lead.whatsapp && (
+                    <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl space-y-2">
+                      <p className="text-yellow-400 text-[12px] font-semibold">WhatsApp não encontrado automaticamente</p>
+                      <p className="text-yellow-300/70 text-[11px]">Se você encontrou o número manualmente (site, Instagram, etc.), cole aqui.</p>
+                      <div className="flex gap-2">
+                        <input
+                          type="tel"
+                          value={manualWa}
+                          onChange={e => setManualWa(e.target.value)}
+                          placeholder="Ex: 48 99999-1234 ou 5548999991234"
+                          className="flex-1 bg-surface border border-brd text-white text-[12px] placeholder-muted px-3 py-2 rounded-lg outline-none focus:border-yellow-500 transition-colors"
+                        />
+                        <button
+                          onClick={() => manualWa.trim() && updateWaMutation.mutate()}
+                          disabled={!manualWa.trim() || updateWaMutation.isPending}
+                          className="flex items-center gap-1.5 px-3 py-2 bg-yellow-600 hover:bg-yellow-500 disabled:opacity-40 text-white text-[12px] font-semibold rounded-lg transition-colors"
+                        >
+                          {updateWaMutation.isPending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                          Salvar e testar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {lead?.is_hot && (
                     <div className="flex items-center gap-3 p-3 bg-red-500/10 border border-red-500/30 rounded-xl">
                       <Flame size={18} className="text-red-400 shrink-0" />

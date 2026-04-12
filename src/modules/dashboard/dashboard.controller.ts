@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Delete, Put, Param, Query, Res, Body } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Put, Param, Query, Res, Body, StreamableFile } from '@nestjs/common';
 import { Response } from 'express';
 import { join } from 'path';
 import axios from 'axios';
@@ -34,7 +34,9 @@ export class DashboardController {
   async getPipeline() { return this.dashboardService.getPipelineCounts(); }
 
   @Get('api/pending')
-  async getPending() { return this.dashboardService.getPendingApprovals(); }
+  async getPending(@Query('campaign_id') campaign_id?: string) {
+    return this.dashboardService.getPendingApprovals(campaign_id);
+  }
 
   @Get('api/leads')
   async getLeads(
@@ -43,16 +45,58 @@ export class DashboardController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('campaign_id') campaign_id?: string,
+    @Query('niche') niche?: string,
   ) {
-    return this.dashboardService.getLeads(status, search, page ? parseInt(page) : 1, limit ? parseInt(limit) : 20, campaign_id);
+    return this.dashboardService.getLeads(status, search, page ? parseInt(page) : 1, limit ? parseInt(limit) : 20, campaign_id, niche);
   }
 
   @Get('api/campaigns')
   async getCampaigns() { return this.dashboardService.getCampaigns(); }
 
+  @Get('api/niches')
+  async getNiches() { return this.dashboardService.getNiches(); }
+
+  @Delete('api/campaigns/:id')
+  async deleteCampaign(@Param('id') id: string) {
+    return this.dashboardService.deleteCampaign(id);
+  }
+
   @Get('api/activity/recent')
   getActivity(@Query('limit') limit?: string) {
     return this.activityService.getRecent(limit ? parseInt(limit) : 50);
+  }
+
+  @Get('api/leads/export')
+  async exportLeads(
+    @Query('status') status?: string,
+    @Query('campaign_id') campaign_id?: string,
+    @Res() res?: Response,
+  ) {
+    const leads = await this.dashboardService.exportLeads(status, campaign_id);
+    const escape = (v: any) => {
+      if (v == null) return '';
+      const s = String(v).replace(/"/g, '""');
+      return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s}"` : s;
+    };
+    const mapsUrl = (lead: any) => {
+      const parts = [lead.nome, lead.cidade, lead.estado].filter(Boolean).join(' ');
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(parts)}`;
+    };
+    const headers = ['Nome', 'Endereço', 'Cidade', 'Estado', 'Telefone', 'WhatsApp', 'Site', 'Google Maps'];
+    const rows = leads.map(l => [
+      escape(l.nome),
+      escape(l.endereco),
+      escape(l.cidade),
+      escape(l.estado),
+      escape(l.telefone_google),
+      escape((l as any).whatsapp),
+      escape(l.site),
+      escape(mapsUrl(l)),
+    ].join(','));
+    const csv = [headers.join(','), ...rows].join('\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="leads.csv"');
+    res.send('\uFEFF' + csv); // BOM para Excel abrir em UTF-8
   }
 
   @Get('api/leads/:id')
@@ -61,6 +105,11 @@ export class DashboardController {
   @Post('api/leads/:id/generate-email')
   generateEmail(@Param('id') id: string, @Body() body: { context?: string }) {
     return this.dashboardService.generateColdEmail(id, body.context || '');
+  }
+
+  @Put('api/leads/:id/whatsapp')
+  updateLeadWhatsapp(@Param('id') id: string, @Body() body: { whatsapp: string }) {
+    return this.dashboardService.updateLeadWhatsapp(id, body.whatsapp?.trim());
   }
 
   @Post('api/leads/:id/approve')
@@ -113,6 +162,15 @@ export class DashboardController {
       body.niche?.trim(),
     );
     return job;
+  }
+
+  @Post('api/scraper/expand-region')
+  async expandRegion(@Body() body: { region: string; niche?: string }) {
+    if (!body.region?.trim()) return { error: 'Região obrigatória' };
+    return this.dashboardService.expandRegion(
+      body.region.trim(),
+      body.niche?.trim() || 'casa de câmbio',
+    );
   }
 
   // ── MOTOR DE WA TEST ─────────────────────────────────────────

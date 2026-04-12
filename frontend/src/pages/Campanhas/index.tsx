@@ -1,12 +1,29 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import type { CampaignStat } from '@/types/api'
 import {
   Play, CheckCircle, XCircle, Clock, RefreshCw, Activity, TrendingUp,
-  RotateCcw, Pause, PlayCircle, Zap, AlertTriangle, MapPin, Tag,
+  RotateCcw, Pause, PlayCircle, Zap, AlertTriangle, MapPin, Tag, Sparkles, Trash2,
 } from 'lucide-react'
+
+// ─── Countdown hook ───────────────────────────────────────────────
+
+function useCountdown(targetIso: string | null | undefined): number | null {
+  const [secsLeft, setSecsLeft] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!targetIso) { setSecsLeft(null); return }
+    const target = new Date(targetIso).getTime()
+    const calc = () => Math.max(0, Math.round((target - Date.now()) / 1000))
+    setSecsLeft(calc())
+    const id = setInterval(() => setSecsLeft(calc()), 1000)
+    return () => clearInterval(id)
+  }, [targetIso])
+
+  return secsLeft
+}
 
 // ─── Motor Status Card ────────────────────────────────────────────
 
@@ -48,6 +65,7 @@ function MotorCard() {
 
   const isPaused = motor?.status === 'paused'
   const isAtLimit = motor ? motor.remaining === 0 : false
+  const countdown = useCountdown(motor?.nextSendAt)
 
   return (
     <div className={`bg-surface border rounded-xl p-5 space-y-4 ${
@@ -127,21 +145,56 @@ function MotorCard() {
 
       {/* Status line */}
       {motor && (
-        <div className="flex items-center gap-4 text-[11px] text-muted">
+        <div className="space-y-2">
+          {/* Last sent */}
           {motor.lastSentAt && (
-            <span>Último envio: <span className="text-white">{new Date(motor.lastSentAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span></span>
+            <div className="flex items-center gap-2 text-[11px] text-muted">
+              <span className="flex-shrink-0">Último envio:</span>
+              <span className="text-white font-medium truncate">
+                {motor.lastSentLeadNome
+                  ? <><span className="text-blue-300">{motor.lastSentLeadNome}</span> · {new Date(motor.lastSentAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</>
+                  : new Date(motor.lastSentAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+                }
+              </span>
+            </div>
           )}
-          {motor.nextSendAt && !isPaused && (
-            <span className="flex items-center gap-1">
-              <Zap size={10} className="text-blue-400" />
-              Próximo por volta de: <span className="text-white">{new Date(motor.nextSendAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
-            </span>
+
+          {/* Next lead countdown */}
+          {motor.nextSendAt && !isPaused && !isAtLimit && (
+            <div className={`flex items-center gap-2 rounded-lg px-3 py-2 ${
+              countdown !== null && countdown <= 60
+                ? 'bg-green-500/10 border border-green-500/20'
+                : 'bg-surface2'
+            }`}>
+              <Zap size={11} className={countdown !== null && countdown <= 60 ? 'text-green-400 animate-pulse' : 'text-blue-400'} />
+              <span className="text-[11px] text-muted flex-shrink-0">Próxima mensagem:</span>
+              {motor.nextLeadNome && (
+                <span className="text-[11px] text-white font-semibold truncate">{motor.nextLeadNome}</span>
+              )}
+              {countdown !== null && countdown > 0 ? (
+                <span className={`text-[12px] font-bold tabular-nums ml-auto flex-shrink-0 ${
+                  countdown <= 30 ? 'text-green-400' : countdown <= 120 ? 'text-yellow-400' : 'text-muted'
+                }`}>
+                  {countdown >= 3600
+                    ? `${Math.floor(countdown / 3600)}h ${Math.floor((countdown % 3600) / 60)}m`
+                    : countdown >= 60
+                    ? `${Math.floor(countdown / 60)}m ${countdown % 60}s`
+                    : `${countdown}s`
+                  }
+                </span>
+              ) : countdown === 0 ? (
+                <span className="text-[11px] text-green-400 font-semibold ml-auto flex-shrink-0 animate-pulse">enviando agora...</span>
+              ) : (
+                <span className="text-[11px] text-muted ml-auto flex-shrink-0">{new Date(motor.nextSendAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+              )}
+            </div>
           )}
+
           {isPaused && motor.pausedAt && (
-            <span className="flex items-center gap-1 text-yellow-400">
+            <div className="flex items-center gap-1 text-[11px] text-yellow-400">
               <AlertTriangle size={10} />
               Pausado desde: {new Date(motor.pausedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-            </span>
+            </div>
           )}
         </div>
       )}
@@ -202,13 +255,29 @@ function ActivityFeed() {
 
 // ─── Campaign Card ────────────────────────────────────────────────
 
-function CampaignCard({ camp }: { camp: CampaignStat }) {
+function CampaignCard({ camp, onDelete }: { camp: CampaignStat; onDelete: () => void }) {
+  const [confirming, setConfirming] = useState(false)
+  const qc = useQueryClient()
+
   const elapsed = camp.finished_at
     ? Math.round((new Date(camp.finished_at).getTime() - new Date(camp.started_at).getTime()) / 1000) + 's'
     : Math.round((Date.now() - new Date(camp.started_at).getTime()) / 1000) + 's'
 
   const waRate = camp.leads_found > 0 ? Math.round((camp.leads_wa / camp.leads_found) * 100) : 0
   const contactRate = camp.leads_wa > 0 ? Math.round((camp.leads_contatados / camp.leads_wa) * 100) : 0
+
+  const deleteMutation = useMutation({
+    mutationFn: () => api.deleteCampaign(camp.id),
+    onSuccess: (res: any) => {
+      qc.invalidateQueries({ queryKey: ['campaigns'] })
+      qc.invalidateQueries({ queryKey: ['leads'] })
+      qc.invalidateQueries({ queryKey: ['kanban'] })
+      qc.invalidateQueries({ queryKey: ['niches'] })
+      toast.success(`Campanha deletada (${res.deleted} leads removidos)`)
+      onDelete()
+    },
+    onError: () => toast.error('Erro ao deletar campanha'),
+  })
 
   return (
     <div className="bg-surface2 border border-brd rounded-xl p-4 space-y-3">
@@ -243,6 +312,28 @@ function CampaignCard({ camp }: { camp: CampaignStat }) {
           }`}>
             {camp.status === 'running' ? 'Rodando' : camp.status === 'done' ? 'Concluída' : 'Erro'}
           </span>
+          {confirming ? (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => deleteMutation.mutate()}
+                disabled={deleteMutation.isPending}
+                className="text-[11px] px-2 py-0.5 bg-red-500 hover:bg-red-400 disabled:opacity-50 text-white font-bold rounded-md transition-colors"
+              >
+                {deleteMutation.isPending ? '...' : 'Confirmar'}
+              </button>
+              <button onClick={() => setConfirming(false)} className="text-[11px] px-2 py-0.5 bg-surface text-muted hover:text-white rounded-md transition-colors">
+                Cancelar
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirming(true)}
+              className="p-1 text-muted hover:text-red-400 hover:bg-red-500/10 rounded-md transition-colors"
+              title="Deletar campanha e todos os leads"
+            >
+              <Trash2 size={12} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -281,6 +372,7 @@ export function CampanhasPage() {
   const [location, setLocation] = useState('')
   const [niche, setNiche] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [expanding, setExpanding] = useState(false)
   const qc = useQueryClient()
 
   const { data: campaigns, isLoading } = useQuery({
@@ -326,6 +418,22 @@ export function CampanhasPage() {
     onError: () => toast.error('Erro ao recuperar respostas'),
   })
 
+  async function handleExpand() {
+    const lines = query.trim().split('\n').filter(Boolean)
+    // Pega a última linha como região se tiver só uma, ou pede confirmação
+    const region = lines.length === 1 ? lines[0] : query.trim()
+    if (!region) return
+    setExpanding(true)
+    try {
+      const res = await api.expandRegion({ region, niche: niche || 'casa de câmbio' })
+      if (res.queries?.length) setQuery(res.queries.join('\n'))
+    } catch {
+      toast.error('Erro ao expandir região')
+    } finally {
+      setExpanding(false)
+    }
+  }
+
   const inputCls = 'bg-surface border border-brd text-white placeholder-muted px-3 py-2.5 rounded-lg text-[13px] outline-none focus:border-blue-500 transition-colors'
 
   return (
@@ -348,18 +456,41 @@ export function CampanhasPage() {
         </div>
 
         {/* Main row */}
-        <div className="flex gap-3 flex-wrap">
-          <input
-            type="text"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && query.trim()) trigger.mutate() }}
-            placeholder="casa de câmbio Porto Alegre · ou link do Maps"
-            className={`${inputCls} flex-1 min-w-[260px]`}
-          />
-          <select value={max} onChange={e => setMax(e.target.value)} className={inputCls}>
+        <div className="flex gap-3 flex-wrap items-start">
+          <div className="flex-1 min-w-[260px] space-y-1">
+            <div className="relative">
+              <textarea
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder={"casa de câmbio Porto Alegre\ncasa de câmbio Caxias do Sul\ncasa de câmbio Pelotas"}
+                rows={3}
+                className={`${inputCls} w-full resize-none leading-relaxed pr-24`}
+              />
+              <button
+                onClick={handleExpand}
+                disabled={!query.trim() || expanding}
+                title="Expandir região automaticamente com IA"
+                className="absolute top-2 right-2 flex items-center gap-1 px-2 py-1 bg-purple-600/80 hover:bg-purple-500 disabled:opacity-40 text-white text-[11px] font-semibold rounded-md transition-colors"
+              >
+                <Sparkles size={11} className={expanding ? 'animate-spin' : ''} />
+                {expanding ? '...' : 'Expandir'}
+              </button>
+            </div>
+            <p className="text-[10px] text-muted">Digite uma região ou cidade e clique em <span className="text-purple-400">Expandir</span> — a IA gera as queries automaticamente. Ou escreva uma por linha.</p>
+          </div>
+          <div className="space-y-1">
+            <input
+              type="text"
+              value={campaignName}
+              onChange={e => setCampaignName(e.target.value)}
+              placeholder="Nome da campanha *"
+              className={`${inputCls} w-[200px] ${!campaignName.trim() ? 'border-red-500/50' : ''}`}
+            />
+            <p className="text-[10px] text-red-400/70">Obrigatório</p>
+          </div>
+          <select value={max} onChange={e => setMax(e.target.value)} className={inputCls} title="Máximo de leads por query">
             {['20', '30', '50', '80', '100'].map(v => (
-              <option key={v} value={v}>{v} leads</option>
+              <option key={v} value={v}>{v} / query</option>
             ))}
           </select>
           <select value={templateId} onChange={e => setTemplateId(e.target.value)} className={inputCls}>
@@ -367,8 +498,8 @@ export function CampanhasPage() {
             {templates?.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
           </select>
           <button
-            onClick={() => query.trim() && trigger.mutate()}
-            disabled={!query.trim() || trigger.isPending}
+            onClick={() => query.trim() && campaignName.trim() && trigger.mutate()}
+            disabled={!query.trim() || !campaignName.trim() || trigger.isPending}
             className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-semibold text-[13px] rounded-lg transition-colors"
           >
             <Play size={14} />
@@ -387,17 +518,7 @@ export function CampanhasPage() {
 
         {/* Advanced options */}
         {showAdvanced && (
-          <div className="grid grid-cols-3 gap-3 pt-1 border-t border-brd">
-            <div className="space-y-1">
-              <label className="text-[11px] text-muted block">Nome da campanha</label>
-              <input
-                type="text"
-                value={campaignName}
-                onChange={e => setCampaignName(e.target.value)}
-                placeholder="Ex: RS — Maio 2026"
-                className={`${inputCls} w-full`}
-              />
-            </div>
+          <div className="grid grid-cols-2 gap-3 pt-1 border-t border-brd">
             <div className="space-y-1">
               <label className="flex items-center gap-1 text-[11px] text-muted">
                 <MapPin size={10} />Localização
@@ -446,7 +567,7 @@ export function CampanhasPage() {
               <p className="text-[11px] text-muted opacity-60">Dispare a primeira campanha acima.</p>
             </div>
           ) : (
-            campaigns.map(c => <CampaignCard key={c.id} camp={c} />)
+            campaigns.map(c => <CampaignCard key={c.id} camp={c} onDelete={() => {}} />)
           )}
         </div>
 

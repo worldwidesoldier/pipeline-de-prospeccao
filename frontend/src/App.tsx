@@ -31,7 +31,7 @@ export default function App() {
 
   const { data: inbox } = useQuery({
     queryKey: ['inbox'],
-    queryFn: api.getPending,
+    queryFn: () => api.getPending(),
     refetchInterval: 30_000,
   })
 

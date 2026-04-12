@@ -12,6 +12,11 @@ export function waHref(n?: string | null): string | null {
   return 'https://wa.me/' + (c.startsWith('55') ? c : '55' + c)
 }
 
+export function mapsHref(nome?: string | null, cidade?: string | null, estado?: string | null): string {
+  const q = [nome, cidade, estado].filter(Boolean).join(' ')
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`
+}
+
 export function fmtMin(m?: number | null): string {
   if (m == null) return '—'
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60}min`

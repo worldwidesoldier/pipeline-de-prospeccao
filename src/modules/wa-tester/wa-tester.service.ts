@@ -192,6 +192,18 @@ export class WaTesterService implements OnModuleInit {
       return;
     }
 
+    // ── Deduplicação: mata jobs duplicados do mesmo lead ─────────
+    const existingTest = await this.crmService.getLatestWaTestByLeadId(leadId);
+    if (existingTest) {
+      this.logger.log(`Lead ${lead.nome} já tem wa_test — job duplicado descartado`);
+      return;
+    }
+    const skipStatuses = ['tested', 'scored', 'pending_approval', 'approved', 'outreach', 'convertido', 'perdido', 'descartado', 'descartado_bot'];
+    if (skipStatuses.includes(lead.status)) {
+      this.logger.log(`Lead ${lead.nome} já no status ${lead.status} — job duplicado descartado`);
+      return;
+    }
+
     // ── Pausa global do motor ──────────────────────────────────
     if (await this.motor.isPaused()) {
       this.logger.log(`Motor pausado — ${lead.nome} re-agendado para verificação em 2 min`);
@@ -203,32 +215,15 @@ export class WaTesterService implements OnModuleInit {
       return;
     }
 
-    if (!this.isBusinessHours()) {
-      // Calcula delay até próximo dia útil 5h no horário do Brasil
-      const br = this.getBrazilDate();
-      const brDay = br.getDay();
-      const daysToAdd = brDay === 5 ? 3 : brDay === 6 ? 2 : 1; // sex→seg, sáb→seg, resto→+1
-      const nextBr = new Date(br);
-      nextBr.setDate(br.getDate() + daysToAdd);
-      nextBr.setHours(5, 0, 0, 0);
-      // Converte de volta para UTC real (adiciona 3h de offset Brazil→UTC)
-      const nextUtcMs = nextBr.getTime() + 3 * 3600000;
-      const delay = nextUtcMs - Date.now();
-      this.logger.log(`Fora do horário BR — reagendando ${lead.nome} para ${nextBr.toLocaleString('pt-BR')}`);
-      await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, { delay, attempts: 3, backoff: { type: 'exponential', delay: 5000 } });
-      return;
-    }
-
-    // Limite diário: máximo WA_DAILY_LIMIT mensagens de teste por dia (padrão 20)
-    const maxDaily = parseInt(process.env.WA_DAILY_LIMIT || '20');
+    // Limite diário: máximo WA_DAILY_LIMIT mensagens de teste por dia (padrão 50)
+    const maxDaily = parseInt(process.env.WA_DAILY_LIMIT || '50');
     const todayCount = await this.crmService.countTodayWaTests();
     if (todayCount >= maxDaily) {
+      // Reagenda para amanhã às 00:30 (qualquer dia, sem restrição de dia útil)
       const br = this.getBrazilDate();
-      const brDay = br.getDay();
-      const daysToAdd = brDay === 5 ? 3 : brDay === 6 ? 2 : 1;
       const nextBr = new Date(br);
-      nextBr.setDate(br.getDate() + daysToAdd);
-      nextBr.setHours(5, 30, 0, 0);
+      nextBr.setDate(br.getDate() + 1);
+      nextBr.setHours(0, 30, 0, 0);
       const nextUtcMs = nextBr.getTime() + 3 * 3600000;
       const delay = nextUtcMs - Date.now();
       this.logger.log(`Limite diário atingido (${todayCount}/${maxDaily}) — reagendando ${lead.nome} para amanhã`);
@@ -247,11 +242,10 @@ export class WaTesterService implements OnModuleInit {
     if (lastSentAt > 0 && sinceLastSend < randomDelay) {
       const waitMs = randomDelay - sinceLastSend;
       this.logger.log(`Rate limit: próximo envio para ${lead.nome} em ${Math.round(waitMs / 1000)}s`);
+      await this.motor.setNextLead(leadId, lead.nome);
       await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, { delay: waitMs, attempts: 3, backoff: { type: 'exponential', delay: 5000 } });
       return;
     }
-    await this.motor.setLastSentAt(now);
-
     const mensagem = templateId
       ? (TemplateStore.get(templateId) ?? await this.gerarMensagemTeste())
       : await this.gerarMensagemTeste();
@@ -260,19 +254,36 @@ export class WaTesterService implements OnModuleInit {
     this.logger.log(`Enviando teste para ${lead.nome} (${numero})`);
     this.activity.log('sending', `Enviando mensagem para ${lead.nome} (${lead.cidade || lead.estado || ''})`, lead.nome);
 
-    // Envia primeiro — só cria o registro se o envio der certo
-    await axios.post(
-      `${this.evolutionUrl}/message/sendText/${this.instance}`,
-      { number: numero, text: mensagem },
-      {
-        headers: {
-          'apikey': this.evolutionKey,
-          'Content-Type': 'application/json',
-        },
-        timeout: 30000,
-      }
-    );
-    // Se axios jogar erro, propaga — Bull vai retentar (attempts: 3, backoff exponencial)
+    // Envia — captura falha da Evolution API de forma resiliente
+    try {
+      await axios.post(
+        `${this.evolutionUrl}/message/sendText/${this.instance}`,
+        { number: numero, text: mensagem },
+        {
+          headers: {
+            'apikey': this.evolutionKey,
+            'Content-Type': 'application/json',
+          },
+          timeout: 30000,
+        }
+      );
+    } catch (err: any) {
+      // Evolution API indisponível ou WA desconectado — re-agenda sem matar o lead
+      // NÃO seta lastSentAt (não houve envio real) e NÃO lança erro pro Bull
+      this.logger.warn(`Evolution API falhou para ${lead.nome}: ${err?.message || err} — re-agendando em 5 min`);
+      this.activity.log('error', `Falha ao enviar para ${lead.nome}: ${err?.message || 'Evolution API indisponível'}`, lead.nome);
+      await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, {
+        delay: 5 * 60 * 1000,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 30000 },
+      });
+      return;
+    }
+
+    // Só registra o envio no rate limiter após sucesso real
+    await this.motor.setLastSentAt(now);
+    await this.motor.setLastSentLead(leadId, lead.nome);
+    await this.motor.clearNextLead();
 
     const enviadoEm = new Date();
     const waTest = await this.crmService.createWaTest({
@@ -393,31 +404,25 @@ export class WaTesterService implements OnModuleInit {
       respostaTexto = messageText;
     }
 
-    if (isBot) {
-      this.logger.log(`Bot detectado em ${leadNome} — descartando lead ${pending.leadId}`);
-      this.activity.log('bot', `Bot detectado — descartando ${leadNome}`);
-      await this.crmService.updateWaTest(pending.waTestId, {
-        respondeu: true,
-        respondido_em: respondidoEm.toISOString(),
-        tempo_resposta_min: tempoMin,
-        qualidade_resposta: 0,
-        resposta_texto: respostaTexto.substring(0, 500),
-        is_bot: true,
-      });
-      await this.crmService.updateLead(pending.leadId, { status: 'descartado_bot' });
-      return;
-    }
-
+    // Salva wa_test com flag de bot (se for) — mas NÃO auto-descarta
+    // Bots vão pro inbox com badge visual para o usuário decidir
+    // Muitas WA Business legítimas têm menus interativos automáticos
     await this.crmService.updateWaTest(pending.waTestId, {
       respondeu: true,
       respondido_em: respondidoEm.toISOString(),
       tempo_resposta_min: tempoMin,
       qualidade_resposta: qualidade,
       resposta_texto: respostaTexto.substring(0, 500),
-      is_bot: false,
+      is_bot: isBot,
     });
 
-    this.activity.log('responded', `${leadNome} respondeu em ${tempoMin}min — qualidade ${qualidade}/100`);
+    if (isBot) {
+      this.logger.log(`Bot suspeito em ${leadNome} — roteando para inbox com badge 🤖`);
+      this.activity.log('bot', `Bot suspeito — indo pro inbox para revisão: ${leadNome}`);
+    } else {
+      this.activity.log('responded', `${leadNome} respondeu em ${tempoMin}min — qualidade ${qualidade}/100`);
+    }
+
     await this.scoringQueue.add('score_lead', { leadId: pending.leadId });
   }
 
@@ -742,9 +747,11 @@ Resposta recebida: "${texto}"`,
   }
 
   private formatNumber(numero: string): string {
+    // Evolution API espera só dígitos com código de país (ex: 5548999991234)
+    // NÃO adicionar @s.whatsapp.net — isso é JID interno do WA, não aceito no body da API
     const cleaned = numero.replace(/[^\d+]/g, '');
-    if (cleaned.startsWith('+')) return cleaned.substring(1) + '@s.whatsapp.net';
-    if (cleaned.startsWith('55')) return cleaned + '@s.whatsapp.net';
-    return '55' + cleaned + '@s.whatsapp.net';
+    if (cleaned.startsWith('+')) return cleaned.substring(1);
+    if (cleaned.startsWith('55')) return cleaned;
+    return '55' + cleaned;
   }
 }

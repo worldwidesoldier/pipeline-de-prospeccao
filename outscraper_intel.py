@@ -201,8 +201,10 @@ def get_leads_sem_intel(limit: int = 50) -> list[dict]:
     return res.data or []
 
 
-def salvar_intel(lead_id: str, maps_data: dict, contacts: dict, intel: dict, reviews_raw: list) -> None:
+def salvar_intel(lead_id: str, lead: dict, maps_data: dict, contacts: dict, intel: dict, reviews_raw: list) -> None:
     """Consolida dados do Maps, Emails & Contacts e GPT e salva no Supabase."""
+    import re as _re
+
     # Socials: prioriza emails-and-contacts (mais completo), cai back para maps
     maps_socials     = maps_data.get("social_networks") or {}
     contacts_socials = contacts.get("social_networks") or {}
@@ -219,6 +221,11 @@ def salvar_intel(lead_id: str, maps_data: dict, contacts: dict, intel: dict, rev
     if not email:
         email = maps_data.get("email") or None
 
+    # Site: salva se Intel encontrou e lead não tinha
+    site_found = maps_data.get("site") or None
+    if site_found and not lead.get("site"):
+        print(f"  ✓ Site descoberto pelo Intel: {site_found}")
+
     update = {
         "email":              email,
         "cep":                maps_data.get("postal_code") or None,
@@ -229,15 +236,48 @@ def salvar_intel(lead_id: str, maps_data: dict, contacts: dict, intel: dict, rev
         "pain_points":        intel.get("pain_points", []),
         "ai_summary":         intel.get("ai_summary", ""),
         "google_reviews_raw": reviews_raw[:20],
+        # Salva site se o lead não tinha (encontrado pelo maps_find do Intel)
+        **({"site": site_found} if site_found and not lead.get("site") else {}),
     }
+
+    # ── Tenta encontrar WhatsApp via phones do Outscraper Contacts ──────────
+    # Só entra se o lead ainda não tem WhatsApp (sem_whatsapp / sem_whatsapp_fixo)
+    if not lead.get("whatsapp"):
+        # Candidatos: phones do E&C + phone do Maps (pode ser celular)
+        raw_phones = contacts.get("phones") or []
+        maps_phone = maps_data.get("phone")
+        if maps_phone:
+            raw_phones = raw_phones + [{"value": maps_phone, "_src": "maps"}]
+
+        for phone_entry in raw_phones:
+            phone_val = phone_entry.get("value") if isinstance(phone_entry, dict) else str(phone_entry)
+            if not phone_val:
+                continue
+            cleaned = _re.sub(r"[^\d+]", "", str(phone_val))
+            # Valida celular BR: +55DDXXXXXXXXX (13d), 55DDXXXXXXXXX (12d) ou DDXXXXXXXXX (11d)
+            if _re.match(r"^(\+?55)?(\d{2})(9\d{8})$", cleaned):
+                if cleaned.startswith("+"):
+                    wa_number = cleaned
+                elif cleaned.startswith("55") and len(cleaned) >= 12:
+                    wa_number = "+" + cleaned
+                else:
+                    wa_number = "+55" + cleaned
+                src = phone_entry.get("_src", "outscraper_contacts") if isinstance(phone_entry, dict) else "outscraper_contacts"
+                update["whatsapp"]        = wa_number
+                update["whatsapp_source"] = src
+                update["status"]          = "enriched"
+                print(f"  ✓ WhatsApp via {src}: {wa_number}")
+                break
 
     # Remove Nones para não sobrescrever dados existentes com null
     update = {k: v for k, v in update.items() if v is not None}
 
     supabase.table("leads").update(update).eq("id", lead_id).execute()
+    wa_found = "✓ " + update["whatsapp"] if update.get("whatsapp") else "—"
     print(
         f"  ✓ Salvo: email={update.get('email', '—')} | "
         f"instagram={'✓' if update.get('instagram') else '—'} | "
+        f"wa={wa_found} | "
         f"hot={update['is_hot']} | "
         f"{len(update.get('pain_points', []))} dores | "
         f"{len(reviews_raw)} reviews"
@@ -272,21 +312,22 @@ def processar_lead(lead: dict) -> None:
         except Exception as e:
             print(f"  ! Reviews falhou: {e} — usando campo rating/reviews do Maps")
 
-    # 3. Emails & Contacts via site
+    # 3. Emails & Contacts — usa site se disponível, senão query de negócio
+    # A API aceita URL OU query Maps: encontra o site e raspa contatos de qualquer forma
     contacts = {}
-    if site:
-        try:
-            contacts = emails_and_contacts(site)
-            print(f"  → contacts: {bool(contacts.get('emails'))} emails, socials={list((contacts.get('social_networks') or {}).keys())}")
-        except Exception as e:
-            print(f"  ! Emails & Contacts falhou: {e}")
+    ec_query = site or f"{nome} {cidade}"
+    try:
+        contacts = emails_and_contacts(ec_query)
+        print(f"  → contacts (query={ec_query!r}): {bool(contacts.get('emails'))} emails, phones={len(contacts.get('phones') or [])}, socials={list((contacts.get('social_networks') or {}).keys())}")
+    except Exception as e:
+        print(f"  ! Emails & Contacts falhou: {e}")
 
     # 4. Análise GPT
     intel = analisar_reviews(nome, reviews)
     print(f"  → is_hot={intel.get('is_hot')} | {len(intel.get('pain_points', []))} dores")
 
     # 5. Salvar
-    salvar_intel(lead["id"], maps_data, contacts, intel, reviews)
+    salvar_intel(lead["id"], lead, maps_data, contacts, intel, reviews)
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { Globe, Instagram, Phone, Star, MapPin } from 'lucide-react'
 import type { PendingItem, OutreachTemplates } from '@/types/api'
-import { waHref, timeChipClass, fmtMin, cn } from '@/lib/utils'
+import { waHref, mapsHref, timeChipClass, fmtMin, cn } from '@/lib/utils'
 import { ScoreBadge } from '@/components/shared/ScoreBadge'
 import { ScoreBars } from '@/components/shared/ScoreBars'
 import { PitchPreview } from './PitchPreview'
@@ -166,6 +166,15 @@ export function LeadCard({ item, pitchTemplates }: Props) {
             <span>@{igUser}</span>
           </a>
         )}
+        <a
+          href={mapsHref(lead.nome, lead.cidade, lead.estado)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1 text-[12px] text-red-400 hover:text-red-300 transition-colors"
+        >
+          <MapPin size={12} />
+          <span>Google</span>
+        </a>
       </div>
 
       {/* ── Pitch preview ────────────────────────────── */}

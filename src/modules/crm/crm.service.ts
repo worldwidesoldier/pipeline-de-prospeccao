@@ -73,10 +73,17 @@ export class CrmService implements OnModuleInit {
   }
 
   async getLeadsFiltered(
-    filters: { status?: string; search?: string; campaign_id?: string },
+    filters: { status?: string; search?: string; campaign_id?: string; niche?: string },
     page = 1,
     limit = 20,
   ): Promise<Lead[]> {
+    let campaignIds: string[] | null = null;
+    if (filters.niche && !filters.campaign_id) {
+      const jobs = await this.getScrapeJobs();
+      campaignIds = jobs.filter(j => j.niche === filters.niche).map(j => j.id);
+      if (!campaignIds.length) return [];
+    }
+
     let query = this.supabase
       .from('leads')
       .select('*, scores(score_total), wa_tests(is_bot), outreach(msg2_enviada_em, msg3_enviada_em, msg4_enviada_em, respondeu, interesse_nivel)')
@@ -86,6 +93,7 @@ export class CrmService implements OnModuleInit {
     if (filters.status) query = query.eq('status', filters.status);
     if (filters.search) query = query.ilike('nome', `%${filters.search}%`);
     if (filters.campaign_id) query = query.eq('campaign_id', filters.campaign_id);
+    else if (campaignIds) query = query.in('campaign_id', campaignIds);
 
     const { data } = await query;
     return (data || []).map((l: any) => ({
@@ -103,7 +111,14 @@ export class CrmService implements OnModuleInit {
     }));
   }
 
-  async countLeads(filters: { status?: string; search?: string; campaign_id?: string }): Promise<number> {
+  async countLeads(filters: { status?: string; search?: string; campaign_id?: string; niche?: string }): Promise<number> {
+    let campaignIds: string[] | null = null;
+    if (filters.niche && !filters.campaign_id) {
+      const jobs = await this.getScrapeJobs();
+      campaignIds = jobs.filter(j => j.niche === filters.niche).map(j => j.id);
+      if (!campaignIds.length) return 0;
+    }
+
     let query = this.supabase
       .from('leads')
       .select('*', { count: 'exact', head: true });
@@ -111,9 +126,16 @@ export class CrmService implements OnModuleInit {
     if (filters.status) query = query.eq('status', filters.status);
     if (filters.search) query = query.ilike('nome', `%${filters.search}%`);
     if (filters.campaign_id) query = query.eq('campaign_id', filters.campaign_id);
+    else if (campaignIds) query = query.in('campaign_id', campaignIds);
 
     const { count } = await query;
     return count || 0;
+  }
+
+  async getNiches(): Promise<string[]> {
+    const jobs = await this.getScrapeJobs();
+    const niches = [...new Set(jobs.map(j => j.niche).filter(Boolean))] as string[];
+    return niches.sort();
   }
 
   async getCampaignStats(): Promise<any[]> {
@@ -141,6 +163,28 @@ export class CrmService implements OnModuleInit {
     });
   }
 
+  async deleteCampaign(campaignId: string): Promise<{ deleted: number }> {
+    // Buscar todos os leads da campanha
+    const { data: leads } = await this.supabase
+      .from('leads')
+      .select('id')
+      .eq('campaign_id', campaignId);
+    const leadIds = (leads || []).map(l => l.id);
+
+    if (leadIds.length) {
+      await Promise.all([
+        this.supabase.from('wa_tests').delete().in('lead_id', leadIds),
+        this.supabase.from('enrichment').delete().in('lead_id', leadIds),
+        this.supabase.from('scores').delete().in('lead_id', leadIds),
+        this.supabase.from('outreach').delete().in('lead_id', leadIds),
+      ]);
+      await this.supabase.from('leads').delete().in('id', leadIds);
+    }
+
+    await this.supabase.from('scrape_jobs').delete().eq('id', campaignId);
+    return { deleted: leadIds.length };
+  }
+
   async deleteLead(id: string): Promise<void> {
     // Deletar tabelas relacionadas primeiro
     await Promise.all([
@@ -152,7 +196,7 @@ export class CrmService implements OnModuleInit {
     await this.supabase.from('leads').delete().eq('id', id);
   }
 
-  async getKanbanLeads(): Promise<{ minerados: any[]; waEncontrado: any[]; contatados: any[]; respondidos: any[]; fechados: any[] }> {
+  async getKanbanLeads(): Promise<{ minerados: any[]; waEncontrado: any[]; semWhatsapp: any[]; contatados: any[]; respondidos: any[]; fechados: any[] }> {
     const { data } = await this.supabase
       .from('leads')
       .select('*, scores(score_total), outreach(respondeu, status), wa_tests(respondeu, tempo_resposta_min, is_bot)')
@@ -180,11 +224,12 @@ export class CrmService implements OnModuleInit {
 
     const minerados     = leads.filter((l: any) => l.status === 'novo');
     const waEncontrado  = leads.filter((l: any) => l.status === 'enriched');
+    const semWhatsapp   = leads.filter((l: any) => l.status === 'sem_whatsapp' || l.status === 'sem_whatsapp_fixo');
     const contatados    = leads.filter((l: any) => contatadosStatuses.includes(l.status) && !l.outreach_respondeu && l.outreach_status !== 'convertido');
     const respondidos   = leads.filter((l: any) => l.outreach_respondeu === true && l.outreach_status !== 'convertido');
     const fechados      = leads.filter((l: any) => l.outreach_status === 'convertido');
 
-    return { minerados, waEncontrado, contatados, respondidos, fechados };
+    return { minerados, waEncontrado, semWhatsapp, contatados, respondidos, fechados };
   }
 
   async deleteAllLeads(): Promise<{ deleted: number }> {
@@ -360,12 +405,14 @@ export class CrmService implements OnModuleInit {
   }
 
   // Busca leads pending_approval com dados relacionados em uma única query (evita N+1)
-  async getPendingApprovalsData(): Promise<Array<{ lead: Lead; enrichment: Enrichment | null; waTest: WaTest | null; score: Score | null }>> {
-    const { data } = await this.supabase
+  async getPendingApprovalsData(campaign_id?: string): Promise<Array<{ lead: Lead; enrichment: Enrichment | null; waTest: WaTest | null; score: Score | null }>> {
+    let query = this.supabase
       .from('leads')
       .select('*, enrichment(*), wa_tests(*), scores(*)')
       .eq('status', 'pending_approval')
       .order('criado_em', { ascending: false });
+    if (campaign_id) query = query.eq('campaign_id', campaign_id);
+    const { data } = await query;
 
     return (data || []).map((row: any) => {
       const { enrichment, wa_tests, scores, ...lead } = row;

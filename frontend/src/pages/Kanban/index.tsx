@@ -14,11 +14,12 @@ import { Search, Trash2 } from 'lucide-react'
 import { api } from '@/lib/api'
 import type { KanbanLead } from '@/types/api'
 import { StatusPill } from '@/components/shared/StatusPill'
-import { waHref, timeChipClass } from '@/lib/utils'
+import { waHref, mapsHref, timeChipClass } from '@/lib/utils'
 
 const COLUMNS = [
   { id: 'minerados',    label: 'Minerados',      emoji: '💎', hint: 'Sendo prospectados' },
   { id: 'waEncontrado', label: 'WA Encontrado',  emoji: '📞', hint: 'WhatsApp encontrado, aguardando teste' },
+  { id: 'semWhatsapp',  label: 'Sem WhatsApp',   emoji: '📵', hint: 'Sem WA — contatar por fixo ou email' },
   { id: 'contatados',   label: 'Contatados',     emoji: '📱', hint: 'Mensagem teste enviada' },
   { id: 'respondidos',  label: 'Respondidos',    emoji: '💬', hint: 'Responderam o outreach' },
   { id: 'fechados',     label: 'Fechados',       emoji: '🤝', hint: 'Convertidos em clientes' },
@@ -100,6 +101,15 @@ function CardContent({ lead, onDelete }: { lead: KanbanLead; onDelete?: () => vo
             ↗ Site
           </a>
         )}
+        <a
+          href={mapsHref(lead.nome, lead.cidade, lead.estado)}
+          target="_blank"
+          rel="noopener noreferrer"
+          onPointerDown={e => e.stopPropagation()}
+          className="text-red-400 text-[11px] hover:text-red-300 transition-colors"
+        >
+          ↗ Google
+        </a>
         {lead.google_rating && (
           <span className="text-[11px] text-yellow-400">
             {lead.google_rating}★
@@ -196,6 +206,7 @@ function KanbanColumn({ col, leads, onDelete }: {
 export function KanbanPage() {
   const [search, setSearch]       = useState('')
   const [campaignId, setCampaignId] = useState('')
+  const [niche, setNiche]         = useState('')
   const [activeId, setActiveId]   = useState<string | null>(null)
   const qc = useQueryClient()
 
@@ -206,6 +217,7 @@ export function KanbanPage() {
   })
 
   const { data: campaigns } = useQuery({ queryKey: ['campaigns'], queryFn: api.getCampaigns })
+  const { data: niches } = useQuery({ queryKey: ['niches'], queryFn: api.getNiches })
 
   const convertLead = useMutation({
     mutationFn: (id: string) => api.convertLead(id),
@@ -229,6 +241,10 @@ export function KanbanPage() {
 
   function filterLeads(leads: KanbanLead[] = []) {
     let result = leads
+    if (niche) {
+      const ids = new Set((campaigns ?? []).filter(c => (c as any).niche === niche).map(c => c.id))
+      result = result.filter(l => ids.has((l as any).campaign_id))
+    }
     if (campaignId) result = result.filter(l => (l as any).campaign_id === campaignId)
     if (search.trim()) {
       const q = search.toLowerCase()
@@ -245,6 +261,7 @@ export function KanbanPage() {
   const columnData: Record<ColumnId, KanbanLead[]> = {
     minerados:    filterLeads(data?.minerados),
     waEncontrado: filterLeads(data?.waEncontrado),
+    semWhatsapp:  filterLeads(data?.semWhatsapp),
     contatados:   filterLeads(data?.contatados),
     respondidos:  filterLeads(data?.respondidos),
     fechados:     filterLeads(data?.fechados),
@@ -253,6 +270,7 @@ export function KanbanPage() {
   const allLeads = [
     ...(data?.minerados ?? []),
     ...(data?.waEncontrado ?? []),
+    ...(data?.semWhatsapp ?? []),
     ...(data?.contatados ?? []),
     ...(data?.respondidos ?? []),
     ...(data?.fechados ?? []),
@@ -276,8 +294,8 @@ export function KanbanPage() {
   }
 
   const totalLeads = (data?.minerados.length ?? 0) + (data?.waEncontrado.length ?? 0) +
-                     (data?.contatados.length ?? 0) + (data?.respondidos.length ?? 0) +
-                     (data?.fechados.length ?? 0)
+                     (data?.semWhatsapp.length ?? 0) + (data?.contatados.length ?? 0) +
+                     (data?.respondidos.length ?? 0) + (data?.fechados.length ?? 0)
 
   return (
     <div className="space-y-4">
@@ -293,10 +311,20 @@ export function KanbanPage() {
             className="bg-surface border border-brd text-white placeholder-muted px-3 py-2 pl-8 rounded-lg text-[13px] outline-none focus:border-blue-500 transition-colors w-full"
           />
         </div>
+        {niches && niches.length > 0 && (
+          <select
+            value={niche}
+            onChange={e => { setNiche(e.target.value); setCampaignId('') }}
+            className="bg-surface border border-brd text-white px-3 py-2 rounded-lg text-[13px] outline-none focus:border-blue-500 transition-colors"
+          >
+            <option value="">Todos os nichos</option>
+            {niches.map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        )}
         {campaigns && campaigns.length > 0 && (
           <select
             value={campaignId}
-            onChange={e => setCampaignId(e.target.value)}
+            onChange={e => { setCampaignId(e.target.value); setNiche('') }}
             className="bg-surface border border-brd text-white px-3 py-2 rounded-lg text-[13px] outline-none focus:border-blue-500 transition-colors max-w-[200px]"
           >
             <option value="">Todas as campanhas</option>

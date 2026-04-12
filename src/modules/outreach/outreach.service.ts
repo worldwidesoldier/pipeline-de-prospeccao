@@ -19,22 +19,35 @@ const OUTREACH_TEMPLATES_FILE = path.join(process.cwd(), 'data', 'outreach-templ
 const DEFAULT_OUTREACH_TEMPLATES: OutreachTemplates = {
   v1: {
     nome: 'V1 — Resposta lenta',
-    texto: `Oi, tudo bem?
-Semana passada mandei uma mensagem sobre câmbio de dólar — demorou [X horas] pra ter resposta. Nesse tempo já tinha fechado com outra casa.
-Somos da Fair Assist — bot pra WhatsApp que responde cotações na hora, 24h, qualifica o lead e passa pro humano na hora certa.
-7 dias grátis, sem contrato. Posso mostrar funcionando em 15 minutos?`,
+    texto: `Oi [Nome]!
+
+Ontem entrei em contato sobre câmbio e demorou [X horas] pra ter resposta. Nesse tempo o cliente provavelmente já fechou com outra casa.
+
+Sou o Vitor da Apex Mind — a gente resolve exatamente isso: atendimento automático no WhatsApp que responde cotação em segundos, qualquer hora.
+
+7 dias grátis pra testar. Posso mostrar em 10 minutos?`,
   },
   v2: {
     nome: 'V2 — Sem resposta',
-    texto: `Oi, tudo bem?
-Mandei uma mensagem sobre câmbio de dólar e não recebi resposta. Cada mensagem sem retorno é um cliente que foi pra concorrência.
-Somos da Fair Assist — bot que responde na hora, 24h, qualifica o lead e passa pro humano certo. 7 dias grátis. Posso mostrar em 15 minutos?`,
+    texto: `Oi [Nome]!
+
+Ontem mandei mensagem perguntando sobre câmbio de dólar e não recebi resposta.
+
+No câmbio, cliente sem retorno em minutos vai pra concorrência. Simples assim.
+
+Sou o Vitor, da Apex Mind. A gente coloca um atendente automático no WhatsApp de vocês que responde cotação na hora, 24h — mesmo quando a equipe tá ocupada ou fora do horário.
+
+7 dias grátis, sem compromisso. Vale 10 minutos pra ver funcionando?`,
   },
   v3: {
-    nome: 'V3 — Resposta ruim',
-    texto: `Oi, tudo bem?
-Semana passada entrei em contato sobre câmbio — demorou [X horas] e a resposta não foi o que o cliente esperava.
-Somos da Fair Assist — bot no WhatsApp que responde cotações na hora, tira dúvidas e qualifica o lead antes de passar pra você. 7 dias grátis. Topa ver uma demo rápida?`,
+    nome: 'V3 — Respondeu mas atendimento fraco',
+    texto: `Oi [Nome]!
+
+Vi que vocês atendem no WhatsApp — mas quando a resposta demora ou não é o que o cliente esperava, ele some.
+
+A Apex Mind resolve isso: atendente automático treinado pra câmbio, responde cotação, documentação e horário na hora. Só passa pro humano quando o cliente tá pronto pra fechar.
+
+7 dias grátis. Consigo mostrar em 10 minutos essa semana?`,
   },
 };
 

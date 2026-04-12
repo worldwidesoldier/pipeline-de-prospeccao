@@ -20,7 +20,7 @@ export class IntelProcessor {
   @Process('run_intel')
   async handleRunIntel(job: Job<{ leadId: string; templateId?: string }>) {
     const { leadId, templateId } = job.data;
-    const lead = await this.crmService.getLeadById(leadId);
+    let lead = await this.crmService.getLeadById(leadId);
     if (!lead) return;
 
     this.logger.log(`Sales Intel: ${lead.nome} (${lead.status})`);
@@ -29,15 +29,18 @@ export class IntelProcessor {
     try {
       await this.runIntelScript(leadId);
       this.logger.log(`Intel OK: ${lead.nome}`);
+      // Re-lê o lead do banco — o intel pode ter encontrado WhatsApp via Outscraper Contacts
+      // (ex: lead era sem_whatsapp mas intel encontrou celular e atualizou o campo)
+      lead = (await this.crmService.getLeadById(leadId)) ?? lead;
     } catch (e) {
       this.logger.warn(`Intel falhou para ${lead.nome}: ${e.message} — prosseguindo pipeline`);
     }
 
-    // Rotear baseado no status que o enricher definiu
+    // Rotear baseado no status ATUAL (intel pode ter promovido sem_whatsapp → enriched)
     if (lead.status === 'enriched') {
       await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, {
-        attempts: 2,
-        backoff: { type: 'fixed', delay: 30000 },
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 30000 },
       });
       this.logger.log(`${lead.nome} → wa_test_queue`);
     } else if (lead.status === 'sem_whatsapp') {

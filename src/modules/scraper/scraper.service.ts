@@ -75,9 +75,16 @@ export class ScraperService {
 
   private async runScrapeJob(job: ScrapeJob, query: string, max: number, templateId?: string) {
     try {
-      this.logger.log(`Job ${job.id}: scraping "${query}" max=${max}`);
-      const leads = await this.runScraper(query, max);
-      job.leads_found = leads.length;
+      // Suporta múltiplas queries separadas por quebra de linha
+      const queries = query.split('\n').map(q => q.trim()).filter(Boolean);
+      this.logger.log(`Job ${job.id}: ${queries.length} quer${queries.length > 1 ? 'ies' : 'y'}, max=${max} por query — enviando em lote único ao Outscraper`);
+
+      // Envia TODAS as queries em um único subprocess → uma API call ao Outscraper
+      // O Outscraper processa as queries em paralelo, muito mais rápido e sem rate limit
+      const leads = await this.runScraper(queries.join('\n'), max);
+      const totalFound = leads.length;
+
+      this.logger.log(`Job ${job.id}: ${totalFound} resultados recebidos — processando dedup e salvando`);
 
       let newCount = 0;
       for (const lead of leads) {
@@ -97,14 +104,17 @@ export class ScraperService {
         }
       }
 
+      // Atualiza o contador no final
+      job.leads_found = totalFound;
       job.leads_new = newCount;
+
       job.status = 'done';
       job.finished_at = new Date().toISOString();
-      this.logger.log(`Job ${job.id} finalizado: ${leads.length} encontrados, ${newCount} novos`);
+      this.logger.log(`Job ${job.id} finalizado: ${totalFound} encontrados, ${newCount} novos (${queries.length} queries em lote)`);
       await this.crmService.updateScrapeJob(job.id, {
         status: job.status,
-        leads_found: job.leads_found,
-        leads_new: job.leads_new,
+        leads_found: totalFound,
+        leads_new: newCount,
         finished_at: job.finished_at,
       });
     } catch (err) {
@@ -122,7 +132,7 @@ export class ScraperService {
     return new Promise((resolve) => {
       const scriptPath = path.join(__dirname, '../../../outscraper_scraper.py');
       const proc = spawn('python3', [scriptPath, query, '--max', String(max)], {
-        timeout: 300000, // 5 min
+        timeout: 600000, // 10 min — lotes grandes de queries podem levar mais tempo
       });
 
       let output = '';

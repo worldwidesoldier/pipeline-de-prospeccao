@@ -33,17 +33,20 @@ BASE_URL = "https://api.app.outscraper.com"
 HEADERS  = {"X-API-KEY": OUTSCRAPER_KEY}
 
 
-def maps_search(query: str, limit: int) -> list[dict]:
-    """Busca no Google Maps via Outscraper e retorna lista de resultados brutos."""
+def maps_search(queries: list[str], limit: int) -> list[dict]:
+    """Busca no Google Maps via Outscraper e retorna lista de resultados brutos.
+    Aceita múltiplas queries — o Outscraper as processa em paralelo e retorna
+    uma sublista por query que é achatada aqui.
+    """
     params = {
-        "query":        query,
+        "query":        queries,  # lista → Outscraper aceita array de queries
         "limit":        limit,
         "language":     "pt",
         "region":       "BR",
         "reviewsLimit": 0,  # sem reviews aqui — custo menor, reviews vêm via outscraper_intel.py
         "fields":       "name,full_address,city,state,postal_code,phone,site,email,social_networks,rating,reviews",
     }
-    r = requests.get(f"{BASE_URL}/maps/search-v3", params=params, headers=HEADERS, timeout=30)
+    r = requests.get(f"{BASE_URL}/maps/search-v3", params=params, headers=HEADERS, timeout=120)
     r.raise_for_status()
     data = r.json()
 
@@ -53,14 +56,17 @@ def maps_search(query: str, limit: int) -> list[dict]:
 
     raw = data.get("data", data) if isinstance(data, dict) else data
 
-    # Outscraper v3 pode retornar list[list] (uma sublista por query) ou list[dict]
+    # Outscraper v3 retorna list[list] (uma sublista por query) — achata tudo
     if raw and isinstance(raw[0], list):
-        raw = raw[0]
+        flat = []
+        for sublist in raw:
+            flat.extend(sublist)
+        raw = flat
 
     return raw or []
 
 
-def _poll_job(job_id: str, max_wait: int = 120) -> dict:
+def _poll_job(job_id: str, max_wait: int = 300) -> dict:
     """Aguarda um job assíncrono do Outscraper concluir (poll a cada 5s)."""
     waited = 0
     while waited < max_wait:
@@ -115,7 +121,12 @@ def main():
     args = parser.parse_args()
 
     try:
-        raw   = maps_search(args.query, args.max)
+        queries = [q.strip() for q in args.query.split('\n') if q.strip()]
+        if not queries:
+            print(json.dumps([]))
+            return
+        print(f"Queries ({len(queries)}): {queries}", file=sys.stderr)
+        raw   = maps_search(queries, args.max)
         leads = [_to_lead(item) for item in raw if item.get("name")]
         print(json.dumps(leads, ensure_ascii=False))
     except Exception as e:

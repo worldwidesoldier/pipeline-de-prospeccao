@@ -85,9 +85,9 @@ export class EnricherService {
           enrichmentData.ig_ativo = igData.ativo;
           enrichmentData.ig_bio = igData.bio;
 
-          // Pegar WhatsApp da bio do IG se ainda não tem
-          if (!whatsapp && (igData.whatsapp_na_bio || igData.telefone_na_bio)) {
-            whatsapp = igData.whatsapp_na_bio || igData.telefone_na_bio;
+          // Pegar WhatsApp da bio do IG, external_url ou business_phone se ainda não tem
+          if (!whatsapp && (igData.whatsapp_na_bio || igData.telefone_na_bio || igData.business_phone)) {
+            whatsapp = igData.whatsapp_na_bio || igData.telefone_na_bio || igData.business_phone;
             whatsappSource = 'instagram_bio';
           }
         }
@@ -153,22 +153,99 @@ import json
 import re
 from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
 
-def extract_wa(md):
-    # 1. wa.me/NUMBER (most reliable)
-    m = re.search(r'wa\\.me/([0-9]{10,14})', md, re.IGNORECASE)
-    if m: return m.group(1)
-    # 2. whatsapp.com/send?phone=NUMBER or api.whatsapp.com/send?phone=NUMBER
-    m = re.search(r'whatsapp\\.com/send[?&]phone=([0-9]{10,14})', md, re.IGNORECASE)
-    if m: return m.group(1)
-    # 3. api.whatsapp.com/send?phone=NUMBER
-    m = re.search(r'api\\.whatsapp\\.com/send[?&]phone=([0-9]{10,14})', md, re.IGNORECASE)
-    if m: return m.group(1)
-    # 4. keyword context: whatsapp/zap/wpp near number
-    m = re.search(r'(?:whatsapp|\\bwpp\\b|\\bzap\\b)[^0-9+]{0,30}(\\+?[0-9]{2}[\\s.-]?[0-9]{2}[\\s.-]?9[0-9]{4}[\\s.-]?[0-9]{4})', md, re.IGNORECASE)
-    if m: return m.group(1)
-    # 5. Brazilian mobile number with 55 country code
-    m = re.search(r'(\\+?55[\\s.-]?[0-9]{2}[\\s.-]?9[0-9]{4}[\\s.-]?[0-9]{4})', md)
-    if m: return m.group(1)
+def normalize_phone(raw):
+    """Normaliza qualquer formato BR → só dígitos sem código de país."""
+    digits = re.sub(r'[^\\d]', '', str(raw))
+    if digits.startswith('0'): digits = digits[1:]           # 0xx → xx
+    if digits.startswith('55') and len(digits) > 11:
+        digits = digits[2:]                                   # 55xx → xx
+    return digits if 8 <= len(digits) <= 11 else None
+
+def is_valid_br(n):
+    """DDD válido (11-99) + 8 dígitos fixo ou 9 dígitos celular."""
+    return bool(n and re.match(r'^[1-9][0-9]\\d{8,9}$', n))
+
+def extract_wa(html, md):
+    """
+    Pipeline de extração de WhatsApp, ordem decrescente de confiança.
+    Retorna número normalizado (só dígitos, DDD+número) ou None.
+    """
+    H = html or ''
+    M = md or ''
+
+    # ── Nível 1: links explícitos de WhatsApp em href/src (100% certeza) ──
+    for pat in [r'wa\\.me/([0-9+]{8,15})',
+                r'whatsapp\\.com/send[?&]phone=([0-9+]{8,15})',
+                r'api\\.whatsapp\\.com/send[?&]phone=([0-9+]{8,15})']:
+        for src in [H, M]:
+            for m in re.finditer(pat, src, re.IGNORECASE):
+                n = normalize_phone(m.group(1))
+                if is_valid_br(n): return n
+
+    # Helper: dado lista de (posição, número), retorna o mais próximo de qualquer keyword WA
+    wa_kw = re.compile(r'whatsapp|\\bwpp\\b|\\bzap\\b', re.IGNORECASE)
+    def closest_to_wa(candidates, text):
+        """Retorna número mais próximo de menção WA no texto. candidates = [(pos, num)]"""
+        if not candidates: return None
+        if len(candidates) == 1: return candidates[0][1]
+        wa_positions = [m.start() for m in wa_kw.finditer(text)]
+        if not wa_positions: return candidates[0][1]
+        best = min(candidates, key=lambda t: min(abs(t[0] - wp) for wp in wa_positions))
+        return best[1]
+
+    # ── Nível 2: tel: links — mais próximo de menção WA (não primeiro) ────
+    has_wa_mention = bool(wa_kw.search(H + M))
+    phone_re = re.compile(r'\\(?([0-9]{2})\\)?[\\s.-]?([0-9]{4,5})[\\s.-]?([0-9]{4})')
+    if has_wa_mention:
+        tel_candidates = []
+        for m in re.finditer(r'href=["\\'\\s]*(tel:[+0-9().\\s-]{4,20})["\\'\\s>]', H, re.IGNORECASE):
+            n = normalize_phone(m.group(1).replace('tel:', '').replace('Tel:', ''))
+            if is_valid_br(n): tel_candidates.append((m.start(), n))
+        result = closest_to_wa(tel_candidates, H)
+        if result: return result
+
+    # ── Nível 3: JSON-LD / Schema.org telephone ───────────────────────────
+    if has_wa_mention:
+        for m in re.finditer(r'"telephone"\\s*:\\s*"([^"]{6,20})"', H, re.IGNORECASE):
+            n = normalize_phone(m.group(1))
+            if is_valid_br(n): return n
+
+    # ── Nível 4: contexto "whatsapp/wpp/zap/wa" + número mais próximo ────
+    # Múltiplos números no snippet → retorna o mais próximo da keyword, não o primeiro
+    wa_ctx = re.compile(r'.{0,30}(?:whatsapp|\\bwpp\\b|\\bzap\\b|\\bwa\\b).{0,300}', re.IGNORECASE | re.DOTALL)
+    for src in [H, M]:
+        for snip_m in wa_ctx.finditer(src):
+            snip = snip_m.group()
+            kw_pos = re.search(r'whatsapp|\\bwpp\\b|\\bzap\\b|\\bwa\\b', snip, re.IGNORECASE)
+            kw_pos = kw_pos.start() if kw_pos else 30
+            candidates = []
+            for pm in phone_re.finditer(snip):
+                n = normalize_phone(pm.group(1) + pm.group(2) + pm.group(3))
+                if is_valid_br(n):
+                    candidates.append((abs(pm.start() - kw_pos), n))
+            if candidates:
+                candidates.sort(key=lambda x: x[0])
+                return candidates[0][1]
+
+    # ── Nível 5: footer HTML — múltiplos números: prefere celular, depois WA-próximo ──
+    footer_m = re.search(r'<footer[^>]*>(.+?)</footer>', H, re.IGNORECASE | re.DOTALL)
+    if footer_m:
+        footer = footer_m.group(1)
+        footer_candidates = [(m.start(), normalize_phone(m.group(1) + m.group(2) + m.group(3)))
+                             for m in phone_re.finditer(footer)
+                             if normalize_phone(m.group(1) + m.group(2) + m.group(3))]
+        footer_candidates = [(pos, n) for pos, n in footer_candidates if is_valid_br(n)]
+        # 1. prefere célula (11 dígitos) mais próxima de WA
+        cells = [(pos, n) for pos, n in footer_candidates if len(n) == 11]
+        result = closest_to_wa(cells, footer) or closest_to_wa(footer_candidates, footer)
+        if result: return result
+
+    # ── Nível 6: +55 + celular no markdown ────────────────────────────────
+    m = re.search(r'\\+?55[\\s.-]?\\(?([0-9]{2})\\)?[\\s.-]?(9[0-9]{4})[\\s.-]?([0-9]{4})', M)
+    if m:
+        n = normalize_phone(m.group(1) + m.group(2) + m.group(3))
+        if is_valid_br(n): return n
+
     return None
 
 def extract_ig(md):
@@ -229,13 +306,15 @@ async def crawl(url):
         md = (result.markdown or "") if result.success else ""
         html = (result.html or "") if result.success else ""
 
-        wa_raw = extract_wa(md)
+        wa_raw = extract_wa(html, md)
         ig_username = extract_ig(md)
         email = extract_email(md, html)
         fb_url = extract_fb(md)
 
-        # If homepage is sparse (< 400 chars), try subpages
-        if len(md.strip()) < 400 and result.success:
+        # Se não achou WA na homepage, SEMPRE tenta subpáginas de contato
+        # (antes só tentava se homepage < 400 chars — maioria dos sites tem homepage grande
+        #  mas coloca o WhatsApp só na página /contato ou /fale-conosco)
+        if not wa_raw and result.success:
             sublinks = extract_links(html, url)
             for sub in sublinks:
                 if sub == url:
@@ -245,7 +324,7 @@ async def crawl(url):
                     sub_md = sub_result.markdown or ""
                     sub_html = sub_result.html or ""
                     if not wa_raw:
-                        wa_raw = extract_wa(sub_md)
+                        wa_raw = extract_wa(sub_html, sub_md)
                     if not ig_username:
                         ig_username = extract_ig(sub_md)
                     if not email:
@@ -258,7 +337,7 @@ async def crawl(url):
 
         print(json.dumps({
             "markdown": md[:3000],
-            "whatsapp": re.sub(r'[^\\d+]', '', wa_raw) if wa_raw else None,
+            "whatsapp": wa_raw,   # já normalizado por normalize_phone()
             "instagram_username": ig_username,
             "email": email,
             "facebook_url": fb_url,
@@ -284,26 +363,39 @@ asyncio.run(crawl(sys.argv[1]))
           let score = 0;
           let resumo = 'Site não analisado';
 
+          let whatsapp = data.whatsapp || null;
+
           if (markdown.length > 50) {
             try {
+              const needsWa = !whatsapp;
               const response = await this.openai.chat.completions.create({
                 model: 'gpt-4o-mini',
                 messages: [{
                   role: 'user',
-                  content: `Analise este conteúdo de site de casa de câmbio e responda APENAS em JSON com: score (0-100, onde 100=tem preços atualizados+WhatsApp+horário de funcionamento), resumo (máximo 100 chars descrevendo o site). Conteúdo: ${markdown.substring(0, 1500)}`,
+                  content: `Analise este conteúdo de site de casa de câmbio e responda APENAS em JSON com:
+- score (0-100, onde 100=tem preços atualizados+WhatsApp+horário de funcionamento)
+- resumo (máximo 100 chars descrevendo o site)
+${needsWa ? '- whatsapp: número de WhatsApp encontrado no conteúdo (apenas dígitos, sem formatação), ou null se não houver. IMPORTANTE: WhatsApp Business aceita tanto celular (9 dígitos: DDD + 9XXXX-XXXX) quanto número fixo (8 dígitos: DDD + XXXX-XXXX). Procure qualquer número próximo a ícone, imagem ou texto de "WhatsApp", "WPP" ou "Zap". Ex: "(55) 3028-8882" → "5530288882", "(51) 9 9999-1234" → "5199991234".' : '- whatsapp: null'}
+Conteúdo: ${markdown.substring(0, 2000)}`,
                 }],
                 response_format: { type: 'json_object' },
               });
               const parsed = JSON.parse(response.choices[0].message.content || '{}');
               score = parsed.score || 30;
               resumo = parsed.resumo || 'Site analisado';
+              if (needsWa && parsed.whatsapp) {
+                whatsapp = String(parsed.whatsapp).replace(/\D/g, '');
+                // Validar: número BR com DDD (10-11 dígitos) ou com código 55 (12-13 dígitos)
+                // Aceita celular (9XXXXXXXX) e fixo (XXXXXXXX) — WA Business roda em ambos
+                if (!/^(55)?\d{10,11}$/.test(whatsapp)) whatsapp = null;
+              }
             } catch {
               score = 30;
               resumo = 'Site existe com conteúdo básico';
             }
           }
 
-          resolve({ score, resumo, whatsapp: data.whatsapp, instagramUsername: data.instagram_username || null, email: data.email || null, facebookUrl: data.facebook_url || null });
+          resolve({ score, resumo, whatsapp, instagramUsername: data.instagram_username || null, email: data.email || null, facebookUrl: data.facebook_url || null });
         } catch {
           resolve({ score: 0, resumo: 'Erro ao analisar site', whatsapp: null, instagramUsername: null, email: null, facebookUrl: null });
         }

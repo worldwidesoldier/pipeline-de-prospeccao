@@ -44,20 +44,33 @@ export class DashboardService {
     return counts;
   }
 
-  async getPendingApprovals(): Promise<any[]> {
-    return this.crmService.getPendingApprovalsData();
+  async getPendingApprovals(campaign_id?: string): Promise<any[]> {
+    return this.crmService.getPendingApprovalsData(campaign_id);
   }
 
-  async getLeads(status?: string, search?: string, page = 1, limit = 20, campaign_id?: string): Promise<any> {
+  async getLeads(status?: string, search?: string, page = 1, limit = 20, campaign_id?: string, niche?: string): Promise<any> {
     const [leads, total] = await Promise.all([
-      this.crmService.getLeadsFiltered({ status, search, campaign_id }, page, limit),
-      this.crmService.countLeads({ status, search, campaign_id }),
+      this.crmService.getLeadsFiltered({ status, search, campaign_id, niche }, page, limit),
+      this.crmService.countLeads({ status, search, campaign_id, niche }),
     ]);
     return { leads, total, page, limit };
   }
 
   async getCampaigns(): Promise<any[]> {
     return this.crmService.getCampaignStats();
+  }
+
+  async getNiches(): Promise<string[]> {
+    return this.crmService.getNiches();
+  }
+
+  async deleteCampaign(id: string) {
+    return this.crmService.deleteCampaign(id);
+  }
+
+  async exportLeads(status?: string, campaign_id?: string): Promise<any[]> {
+    // Busca até 1000 leads sem paginação para exportar tudo de uma vez
+    return this.crmService.getLeadsFiltered({ status, campaign_id }, 1, 1000);
   }
 
   async approveLead(leadId: string) {
@@ -77,6 +90,31 @@ export class DashboardService {
     });
     this.logger.log(`Lead ${leadId} aprovado via dashboard`);
     return { ok: true };
+  }
+
+  async updateLeadWhatsapp(leadId: string, whatsapp: string) {
+    if (!whatsapp) return { error: 'WhatsApp obrigatório' };
+    // Normaliza: remove tudo exceto dígitos e +
+    const cleaned = whatsapp.replace(/[^\d+]/g, '');
+    if (cleaned.length < 10) return { error: 'Número inválido' };
+
+    const lead = await this.crmService.getLeadById(leadId);
+    if (!lead) return { error: 'Lead não encontrado' };
+
+    await this.crmService.updateLead(leadId, {
+      whatsapp: cleaned,
+      whatsapp_source: 'manual',
+      status: 'enriched',
+    });
+
+    // Enfileira para WA test imediatamente
+    await this.waTestQueue.add('test_whatsapp', { leadId }, {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 30000 },
+    });
+
+    this.logger.log(`WhatsApp manual para lead ${lead.nome}: ${cleaned} → wa_test_queue`);
+    return { ok: true, whatsapp: cleaned };
   }
 
   async discardLead(leadId: string) {
@@ -144,6 +182,29 @@ Retorne APENAS um JSON válido:
       this.logger.error('Erro ao gerar cold email:', err);
       throw err;
     }
+  }
+
+  async expandRegion(region: string, niche: string): Promise<{ queries: string[] }> {
+    const response = await this.openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{
+        role: 'user',
+        content: `Você é um assistente de prospecção B2B no Brasil.
+O usuário quer prospectar "${niche}" na região: "${region}".
+Gere uma lista de queries de busca no Google Maps — uma por cidade relevante da região.
+Formato de cada query: "${niche} NOME_DA_CIDADE"
+Retorne APENAS JSON: { "queries": ["...", "...", ...] }
+Regras:
+- Inclua a cidade principal e todas as cidades relevantes da região (mínimo 5, máximo 20)
+- Cidades com maior população primeiro
+- Não repita cidades
+- Não adicione estado ou país, só cidade`,
+      }],
+      response_format: { type: 'json_object' },
+      temperature: 0.3,
+    });
+    const parsed = JSON.parse(response.choices[0].message.content || '{}');
+    return { queries: parsed.queries || [] };
   }
 
   async getKanbanData() {
