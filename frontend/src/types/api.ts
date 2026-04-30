@@ -25,6 +25,74 @@ export interface Lead {
   ai_summary?: string
   cold_email_draft?: string
   google_reviews_raw?: GoogleReview[]
+  // V2 Mystery Shop
+  tag_final?: 'ATIVO' | 'MORTO'
+  tipo_atendimento?: string
+  qualidade_resposta?: string
+  dor_perfil?: 'INEFICIENCIA' | 'OPORTUNIDADE'
+  pontos_fracos?: string[]
+  pontos_fortes?: string[]
+  tom_atendente?: string
+  tempo_resposta_m1?: number
+  taxa_oferecida?: string
+  engenharia_social_sent_at?: string
+  engenharia_social_variacao?: number
+  status_numero?: 'AGUARDANDO' | 'RECEBIDO' | 'NEGADO'
+  gestor_phone?: string
+  briefing_gerado?: string
+  // Funil: time the current phase message was sent (from mystery_conversations)
+  phase_sent_at?: string
+}
+
+export interface MysteryConversation {
+  id: string
+  lead_id: string
+  phase: string
+  direction: 'SENT' | 'RECEIVED'
+  message: string
+  metadata?: { tempo_resposta_s?: number; is_bot?: boolean }
+  sent_at: string
+}
+
+export interface Briefing {
+  id: string
+  nome: string
+  cidade?: string
+  estado?: string
+  whatsapp?: string
+  gestor_phone?: string
+  briefing_gerado?: string
+  tipo_atendimento?: string
+  dor_perfil?: 'INEFICIENCIA' | 'OPORTUNIDADE'
+  pontos_fracos?: string[]
+  pontos_fortes?: string[]
+  qualidade_resposta?: string
+  call_outcome?: 'fechou' | 'sem_interesse' | 'sem_resposta' | null
+}
+
+export interface OperacaoData {
+  sem_wa: Lead[]
+  in_progress: {
+    ms_m1_sent: Lead[]
+    ms_m2a_sent: Lead[]
+    ms_m2b_sent: Lead[]
+    ativo: Lead[]
+    intelligence_done: Lead[]
+    eng_v1: Lead[]
+    eng_v2: Lead[]
+    eng_v3: Lead[]
+  }
+}
+
+export interface SocEngVariant {
+  nome: string
+  texto: string
+}
+
+export interface SocEngTemplates {
+  v1: SocEngVariant
+  v2: SocEngVariant
+  v3: SocEngVariant
 }
 
 export interface GoogleReview {
@@ -80,14 +148,22 @@ export interface PendingItem {
 }
 
 export interface PipelineCounts {
+  // V2
   novo: number
   enriched: number
-  tested: number
-  scored: number
-  pending_approval: number
-  approved: number
-  outreach: number
+  ms_m1_sent: number
+  ms_m2a_sent: number
+  ms_m2b_sent: number
+  ativo: number
+  intelligence_done: number
+  eng_v1: number
+  eng_v2: number
+  eng_v3: number
+  briefing_done: number
+  morto: number
+  // legacy / sem WA
   descartado: number
+  sem_whatsapp: number
   sem_whatsapp_fixo: number
 }
 
@@ -166,7 +242,7 @@ export interface WhatsappStatus {
   number?: string | null
 }
 
-export type ActivityType = 'sending' | 'sent' | 'responded' | 'bot' | 'no_response' | 'enriched' | 'error'
+export type ActivityType = 'sending' | 'sent' | 'responded' | 'bot' | 'no_response' | 'enriched' | 'error' | 'intelligence' | 'social_eng' | 'phone_received' | 'briefing'
 
 export interface ActivityEvent {
   id: string

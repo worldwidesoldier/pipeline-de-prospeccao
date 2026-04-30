@@ -44,7 +44,7 @@ def maps_search(queries: list[str], limit: int) -> list[dict]:
         "language":     "pt",
         "region":       "BR",
         "reviewsLimit": 0,  # sem reviews aqui — custo menor, reviews vêm via outscraper_intel.py
-        "fields":       "name,full_address,city,state,postal_code,phone,site,email,social_networks,rating,reviews",
+        "fields":       "name,full_address,city,state,postal_code,phone,website,email,social_networks,rating,reviews",
     }
     r = requests.get(f"{BASE_URL}/maps/search-v3", params=params, headers=HEADERS, timeout=120)
     r.raise_for_status()
@@ -94,13 +94,28 @@ def _normalize_phone(phone: str | None) -> str | None:
     return cleaned
 
 
+def _clean_site_url(url: str | None) -> str | None:
+    """Outscraper às vezes retorna URLs com query params URL-encoded como path
+    (ex: https://site.com.br/%3Futm_source%3D...). Limpa para a base do domínio."""
+    if not url:
+        return None
+    u = url.strip()
+    # Strip URL-encoded query params accidentally embedded as path
+    for marker in ("/%3F", "%3F", "/?", "?"):
+        idx = u.lower().find(marker.lower())
+        if idx > 0:
+            u = u[:idx + (1 if marker.startswith("/") else 0)]
+            break
+    return u.rstrip("/") + "/" if u else None
+
+
 def _to_lead(item: dict) -> dict:
     """Converte resultado bruto do Outscraper para o formato de lead do pipeline."""
     socials = item.get("social_networks") or {}
     return {
         "nome":            item.get("name")         or "",
         "telefone_google": _normalize_phone(item.get("phone")),
-        "site":            item.get("site")          or None,
+        "site":            _clean_site_url(item.get("website") or item.get("site")),
         "instagram":       socials.get("instagram")  or None,
         "facebook_url":    socials.get("facebook")   or None,
         "x_url":           socials.get("twitter")    or None,

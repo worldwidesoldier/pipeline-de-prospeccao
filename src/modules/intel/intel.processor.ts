@@ -12,8 +12,7 @@ export class IntelProcessor {
   private readonly logger = new Logger(IntelProcessor.name);
 
   constructor(
-    @InjectQueue('wa_test_queue') private waTestQueue: Queue,
-    @InjectQueue('scoring_queue') private scoringQueue: Queue,
+    @InjectQueue('mystery_shop_queue') private mysteryShopQueue: Queue,
     private crmService: CrmService,
   ) {}
 
@@ -38,19 +37,13 @@ export class IntelProcessor {
 
     // Rotear baseado no status ATUAL (intel pode ter promovido sem_whatsapp → enriched)
     if (lead.status === 'enriched') {
-      await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, {
+      await this.mysteryShopQueue.add('send_m1', { leadId, templateId }, {
         attempts: 3,
         backoff: { type: 'exponential', delay: 30000 },
       });
-      this.logger.log(`${lead.nome} → wa_test_queue`);
-    } else if (lead.status === 'sem_whatsapp') {
-      await this.scoringQueue.add('score_lead', { leadId }, {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 5000 },
-      });
-      this.logger.log(`${lead.nome} → scoring_queue (sem WA)`);
+      this.logger.log(`${lead.nome} → mystery_shop_queue`);
     }
-    // sem_whatsapp_fixo → para aqui (email disponível no drawer para contato manual)
+    // sem_whatsapp / sem_whatsapp_fixo → para aqui (email disponível no drawer para contato manual)
   }
 
   private runIntelScript(leadId: string): Promise<void> {

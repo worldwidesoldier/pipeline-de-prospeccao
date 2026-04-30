@@ -89,7 +89,7 @@ def maps_find(query: str) -> dict | None:
         "language":     "pt",
         "region":       "BR",
         "reviewsLimit": 0,
-        "fields":       "place_id,name,full_address,city,state,postal_code,phone,site,email,social_networks,rating,reviews",
+        "fields":       "place_id,name,full_address,city,state,postal_code,phone,website,email,social_networks,rating,reviews",
     }
     r = requests.get(f"{BASE_URL}/maps/search-v3", params=params, headers=HEADERS, timeout=60)
     r.raise_for_status()
@@ -221,8 +221,8 @@ def salvar_intel(lead_id: str, lead: dict, maps_data: dict, contacts: dict, inte
     if not email:
         email = maps_data.get("email") or None
 
-    # Site: salva se Intel encontrou e lead não tinha
-    site_found = maps_data.get("site") or None
+    # Site: salva se Intel encontrou e lead não tinha (Outscraper usa "website")
+    site_found = maps_data.get("website") or maps_data.get("site") or None
     if site_found and not lead.get("site"):
         print(f"  ✓ Site descoberto pelo Intel: {site_found}")
 
@@ -300,7 +300,7 @@ def processar_lead(lead: dict) -> None:
         return
 
     place_id  = maps_data.get("place_id")
-    site      = site or maps_data.get("site")
+    site      = site or maps_data.get("website") or maps_data.get("site")
     print(f"  → place_id={place_id or '—'} | site={site or '—'}")
 
     # 2. Reviews via API dedicada

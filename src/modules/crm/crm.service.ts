@@ -463,6 +463,52 @@ export class CrmService implements OnModuleInit {
     return data || null;
   }
 
+  async getLeadsByTagFinal(tag: 'ATIVO' | 'MORTO'): Promise<Lead[]> {
+    const { data } = await this.supabase
+      .from('leads')
+      .select('*')
+      .eq('tag_final', tag)
+      .order('criado_em', { ascending: false });
+    return data || [];
+  }
+
+  async getBriefings(): Promise<Lead[]> {
+    const { data } = await this.supabase
+      .from('leads')
+      .select('*')
+      .eq('status', 'briefing_done')
+      .order('criado_em', { ascending: false });
+    return data || [];
+  }
+
+  // ─── MYSTERY CONVERSATIONS ────────────────────────────────────
+
+  async saveMysteryMessage(
+    leadId: string,
+    phase: string,
+    direction: 'SENT' | 'RECEIVED',
+    message: string,
+    metadata?: Record<string, any>,
+  ): Promise<void> {
+    const { error } = await this.supabase.from('mystery_conversations').insert({
+      lead_id: leadId,
+      phase,
+      direction,
+      message,
+      metadata: metadata || null,
+    });
+    if (error) this.logger.error(`Erro ao salvar mystery_conversation para lead ${leadId}:`, error.message);
+  }
+
+  async getMysteryConversation(leadId: string): Promise<MysteryConversation[]> {
+    const { data } = await this.supabase
+      .from('mystery_conversations')
+      .select('*')
+      .eq('lead_id', leadId)
+      .order('sent_at', { ascending: true });
+    return data || [];
+  }
+
   // ─── SCRAPER JOBS ──────────────────────────────────────────────
 
   async createScrapeJob(job: ScrapeJobRow): Promise<void> {
@@ -491,6 +537,28 @@ export class CrmService implements OnModuleInit {
       .eq('id', id)
       .single();
     return data || null;
+  }
+
+  async runStatusConstraintMigration(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      // Drop old constraint and add new one including eng_revisao
+      const { error } = await (this.supabase as any).rpc('exec_sql', {
+        sql: `
+          ALTER TABLE leads DROP CONSTRAINT IF EXISTS leads_status_check;
+          ALTER TABLE leads ADD CONSTRAINT leads_status_check CHECK (status IN (
+            'novo','enriched','tested','scored','pending_approval','approved',
+            'outreach','convertido','perdido','descartado','descartado_bot',
+            'sem_whatsapp','sem_whatsapp_fixo','morto',
+            'ms_m1_sent','ms_m2a_sent','ms_m2b_sent','ativo',
+            'intelligence_done','eng_v1','eng_v2','eng_v3','eng_revisao','briefing_done'
+          ));
+        `
+      });
+      if (error) return { ok: false, error: error.message };
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e.message };
+    }
   }
 }
 
@@ -535,6 +603,21 @@ interface Lead {
   ai_summary?: string;
   cold_email_draft?: string;
   google_reviews_raw?: any[];
+  // V2 fields
+  tag_final?: 'ATIVO' | 'MORTO';
+  tipo_atendimento?: string;
+  qualidade_resposta?: string;
+  dor_perfil?: 'INEFICIENCIA' | 'OPORTUNIDADE';
+  pontos_fracos?: string[];
+  pontos_fortes?: string[];
+  tom_atendente?: string;
+  tempo_resposta_m1?: number;
+  taxa_oferecida?: string;
+  engenharia_social_sent_at?: string;
+  engenharia_social_variacao?: number;
+  status_numero?: 'AGUARDANDO' | 'RECEBIDO' | 'NEGADO';
+  gestor_phone?: string;
+  briefing_gerado?: string;
 }
 
 interface Enrichment {
@@ -599,4 +682,14 @@ interface RelatorioStats {
   respostas: number;
   interessados: number;
   convertidos: number;
+}
+
+export interface MysteryConversation {
+  id: string;
+  lead_id: string;
+  phase: string;
+  direction: 'SENT' | 'RECEIVED';
+  message: string;
+  metadata?: Record<string, any>;
+  sent_at: string;
 }

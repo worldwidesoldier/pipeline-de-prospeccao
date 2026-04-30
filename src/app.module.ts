@@ -10,10 +10,9 @@ import { ScraperModule } from './modules/scraper/scraper.module';
 import { EnricherModule } from './modules/enricher/enricher.module';
 import { IntelModule } from './modules/intel/intel.module';
 import { WaTesterModule } from './modules/wa-tester/wa-tester.module';
-import { ScorerModule } from './modules/scorer/scorer.module';
-import { ApprovalModule } from './modules/approval/approval.module';
-import { OutreachModule } from './modules/outreach/outreach.module';
-import { FollowupModule } from './modules/followup/followup.module';
+import { IntelligenceModule } from './modules/intelligence/intelligence.module';
+import { SocialEngineeringModule } from './modules/social-engineering/social-engineering.module';
+import { BriefingModule } from './modules/briefing/briefing.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
@@ -44,10 +43,9 @@ const redisPort = (() => {
     EnricherModule,
     IntelModule,
     WaTesterModule,
-    ScorerModule,
-    ApprovalModule,
-    OutreachModule,
-    FollowupModule,
+    IntelligenceModule,
+    SocialEngineeringModule,
+    BriefingModule,
     DashboardModule,
   ],
 })

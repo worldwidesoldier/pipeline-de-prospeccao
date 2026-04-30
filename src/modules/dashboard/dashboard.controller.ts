@@ -4,8 +4,8 @@ import { join } from 'path';
 import axios from 'axios';
 import { DashboardService } from './dashboard.service';
 import { ScraperService } from '../scraper/scraper.service';
-import { TemplateStore } from '../wa-tester/wa-tester.service';
-import { OutreachTemplateStore, FollowupTemplateStore } from '../outreach/outreach.service';
+import { TemplateStore, MysteryShopConfigStore } from '../wa-tester/wa-tester.service';
+import { SocEngTemplateStore } from '../social-engineering/social-engineering.service';
 import { ActivityService } from '../activity/activity.service';
 import { MotorService } from '../motor/motor.service';
 
@@ -118,6 +118,18 @@ export class DashboardController {
   @Post('api/leads/:id/discard')
   discardLead(@Param('id') id: string) { return this.dashboardService.discardLead(id); }
 
+  @Post('api/leads/:id/mark-morto')
+  markLeadMorto(@Param('id') id: string) { return this.dashboardService.markLeadMorto(id); }
+
+  @Get('api/eng-revisao')
+  getEngRevisao() { return this.dashboardService.getEngRevisao(); }
+
+  @Post('api/leads/:id/eng-action')
+  dispatchEngAction(
+    @Param('id') id: string,
+    @Body() body: { action: 'next_eng' | 'morto' | 'handled' },
+  ) { return this.dashboardService.dispatchEngAction(id, body.action); }
+
   @Get('api/kanban')
   async getKanban() { return this.dashboardService.getKanbanData(); }
 
@@ -214,35 +226,72 @@ export class DashboardController {
     return { ok: TemplateStore.delete(id) };
   }
 
-  // ── OUTREACH TEMPLATES ────────────────────────────────────────
+  // ── SOCIAL ENGINEERING TEMPLATES ─────────────────────────────
 
-  @Get('api/outreach-templates')
-  getOutreachTemplates() { return OutreachTemplateStore.get(); }
+  @Get('api/social-eng-templates')
+  getSocEngTemplates() { return SocEngTemplateStore.get(); }
 
-  @Put('api/outreach-templates/:variant')
-  updateOutreachTemplate(
+  @Put('api/social-eng-templates/:variant')
+  updateSocEngTemplate(
     @Param('variant') variant: string,
     @Body() body: { nome: string; texto: string },
   ) {
     if (!['v1', 'v2', 'v3'].includes(variant)) return { error: 'Variante inválida' };
     if (!body.nome?.trim() || !body.texto?.trim()) return { error: 'Nome e texto são obrigatórios' };
-    return OutreachTemplateStore.updateVariant(variant as 'v1' | 'v2' | 'v3', body.nome.trim(), body.texto.trim());
+    return SocEngTemplateStore.updateVariant(variant as 'v1' | 'v2' | 'v3', body.nome.trim(), body.texto.trim());
   }
 
-  // ── FOLLOWUP TEMPLATES ────────────────────────────────────────
+  @Get('api/mystery-shop-config')
+  getMysteryShopConfig() { return MysteryShopConfigStore.get(); }
 
-  @Get('api/followup-templates')
-  getFollowupTemplates() { return FollowupTemplateStore.get(); }
+  @Put('api/mystery-shop-config/m2a')
+  setM2AConfig(@Body() body: { texto: string | null }) {
+    MysteryShopConfigStore.setM2A(body.texto ?? null);
+    return MysteryShopConfigStore.get();
+  }
 
-  @Put('api/followup-templates/:msg')
-  updateFollowupTemplate(
-    @Param('msg') msg: string,
-    @Body() body: { texto: string },
+  @Put('api/mystery-shop-config/m2b')
+  setM2BConfig(@Body() body: { texto: string | null }) {
+    MysteryShopConfigStore.setM2B(body.texto ?? null);
+    return MysteryShopConfigStore.get();
+  }
+
+  // ── V2: OPERAÇÃO + BRIEFINGS ──────────────────────────────────
+
+  @Get('api/operacao')
+  async getOperacao() { return this.dashboardService.getOperacaoData(); }
+
+  @Post('api/leads/:id/call-outcome')
+  async callOutcome(
+    @Param('id') id: string,
+    @Body() body: { outcome: 'fechou' | 'sem_interesse' | 'sem_resposta' },
   ) {
-    if (!['msg2', 'msg3', 'msg4'].includes(msg)) return { error: 'Mensagem inválida' };
-    if (!body.texto?.trim()) return { error: 'Texto é obrigatório' };
-    return FollowupTemplateStore.updateMsg(msg as 'msg2' | 'msg3' | 'msg4', body.texto.trim());
+    if (!['fechou', 'sem_interesse', 'sem_resposta'].includes(body.outcome)) {
+      return { error: 'Outcome inválido' };
+    }
+    return this.dashboardService.callOutcome(id, body.outcome);
   }
+
+  @Get('api/briefings')
+  async getBriefings() { return this.dashboardService.getBriefings(); }
+
+  @Get('api/leads/:id/conversation')
+  async getLeadConversation(@Param('id') id: string) {
+    return this.dashboardService.getLeadConversation(id);
+  }
+
+  @Get('api/leads/:id/briefing')
+  async getLeadBriefing(@Param('id') id: string) {
+    return this.dashboardService.getLeadBriefing(id);
+  }
+
+  // ── DEMO ─────────────────────────────────────────────────────
+
+  @Post('api/demo/seed')
+  async seedDemo() { return this.dashboardService.seedDemo(); }
+
+  @Delete('api/demo/clear')
+  async clearDemo() { return this.dashboardService.clearDemo(); }
 
   @Get('api/scraper/jobs')
   getJobs() { return this.scraperService.getJobs(); }

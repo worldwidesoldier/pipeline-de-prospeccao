@@ -6,7 +6,7 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-    "build": "cd frontend && npm run build && cd .. && nest build",
+    "build": "cd frontend && npm run build && cd .. && nest build && cp -r src/public/* dist/public/ && mkdir -p dist/scripts && cp src/scripts/*.py dist/scripts/",
     "format": "prettier --write \"src/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",

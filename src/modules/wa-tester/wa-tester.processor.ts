@@ -3,16 +3,16 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { WaTesterService } from './wa-tester.service';
 
-@Processor('wa_test_queue')
+@Processor('mystery_shop_queue')
 export class WaTesterProcessor {
   private readonly logger = new Logger(WaTesterProcessor.name);
 
   constructor(private waTesterService: WaTesterService) {}
 
-  @Process('test_whatsapp')
-  async handleTestWhatsApp(job: Job<{ leadId: string; templateId?: string }>) {
-    this.logger.log(`Testando WA do lead ${job.data.leadId}`);
-    await this.waTesterService.sendTestMessage(job.data.leadId, job.data.templateId);
+  @Process('send_m1')
+  async handleSendM1(job: Job<{ leadId: string; templateId?: string }>) {
+    this.logger.log(`Enviando M1 para lead ${job.data.leadId}`);
+    await this.waTesterService.sendM1(job.data.leadId, job.data.templateId);
     return { ok: true };
   }
 }

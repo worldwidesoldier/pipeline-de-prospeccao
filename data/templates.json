@@ -4,17 +4,5 @@
     "nome": "Cotação dólar simples",
     "texto": "Oi, tudo bem? Qual o câmbio do dólar hoje pra compra?",
     "criado_em": "2026-04-01T13:21:40.413Z"
-  },
-  {
-    "id": "35de30aa-83c2-467e-9e99-2f05eb79367b",
-    "nome": "Cotacao dolar turismo",
-    "texto": "Boa tarde! Qual a taxa do dolar turismo de voces agora? Preciso comprar uns 500 dolares.",
-    "criado_em": "2026-04-01T13:21:45.060Z"
-  },
-  {
-    "id": "a368c5f8-fec3-4598-9c46-1e2727c3554f",
-    "nome": "Cotacao urgente",
-    "texto": "Oi! Preciso fechar cambio hoje ainda, qual o valor do dolar de voces?",
-    "criado_em": "2026-04-01T13:21:45.067Z"
   }
 ]

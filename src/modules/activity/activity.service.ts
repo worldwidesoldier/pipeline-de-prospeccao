@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-export type ActivityType = 'sending' | 'sent' | 'responded' | 'bot' | 'no_response' | 'enriched' | 'error';
+export type ActivityType = 'sending' | 'sent' | 'responded' | 'bot' | 'no_response' | 'enriched' | 'error' | 'intelligence' | 'social_eng' | 'phone_received' | 'briefing';
 
 export interface ActivityEvent {
   id: string;

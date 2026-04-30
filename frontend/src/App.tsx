@@ -3,14 +3,15 @@ import { useQuery } from '@tanstack/react-query'
 import { Toaster } from 'sonner'
 import { api } from '@/lib/api'
 import { WaStatusButton, WaPanel } from '@/components/layout/WaPanel'
-import { InboxPage } from '@/pages/Inbox'
+import { HealthBar } from '@/components/layout/HealthBar'
+import { BriefingsPage } from '@/pages/Briefings'
 import { PipelinePage } from '@/pages/Pipeline'
-import { LeadsPage } from '@/pages/Leads'
-import { KanbanPage } from '@/pages/Kanban'
+import { OperacaoPage } from '@/pages/Operacao'
+import { FunilPage } from '@/pages/Funil'
 import { CampanhasPage } from '@/pages/Campanhas'
 import { TemplatesPage } from '@/pages/Templates'
 
-type Tab = 'inbox' | 'pipeline' | 'leads' | 'crm' | 'campanhas' | 'templates'
+type Tab = 'briefings' | 'pipeline' | 'leads' | 'funil' | 'campanhas' | 'templates'
 
 function Clock() {
   const [time, setTime] = useState('')
@@ -26,22 +27,22 @@ function Clock() {
 }
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('inbox')
+  const [tab, setTab] = useState<Tab>('funil')
   const [waOpen, setWaOpen] = useState(false)
 
-  const { data: inbox } = useQuery({
-    queryKey: ['inbox'],
-    queryFn: () => api.getPending(),
-    refetchInterval: 30_000,
+  const { data: briefings } = useQuery({
+    queryKey: ['briefings'],
+    queryFn: api.getBriefings,
+    refetchInterval: 60_000,
   })
 
-  const inboxCount = inbox?.length ?? 0
+  const briefingsCount = briefings?.length ?? 0
 
   const TABS: { key: Tab; label: string; badge?: number }[] = [
-    { key: 'inbox',     label: 'Inbox',     badge: inboxCount },
+    { key: 'briefings', label: 'Pra Ligar',  badge: briefingsCount },
     { key: 'pipeline',  label: 'Pipeline' },
+    { key: 'funil',     label: 'Funil' },
     { key: 'leads',     label: 'Leads' },
-    { key: 'crm',       label: 'CRM' },
     { key: 'campanhas', label: 'Campanhas' },
     { key: 'templates', label: 'Templates' },
   ]
@@ -65,7 +66,7 @@ export default function App() {
       <WaPanel open={waOpen} onClose={() => setWaOpen(false)} />
 
       {/* Tab nav */}
-      <nav className="bg-surface border-b border-brd px-6 flex sticky top-[52px] z-40 overflow-x-auto">
+      <nav className="bg-surface border-b border-brd px-6 flex sticky top-[52px] z-40 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
         {TABS.map(({ key, label, badge }) => (
           <button
             key={key}
@@ -87,12 +88,14 @@ export default function App() {
         ))}
       </nav>
 
+      <HealthBar />
+
       {/* Content */}
       <main className="max-w-[1400px] mx-auto px-6 py-6">
-        {tab === 'inbox'     && <InboxPage />}
+        {tab === 'briefings' && <BriefingsPage />}
         {tab === 'pipeline'  && <PipelinePage />}
-        {tab === 'leads'     && <LeadsPage />}
-        {tab === 'crm'       && <KanbanPage />}
+        {tab === 'funil'     && <FunilPage />}
+        {tab === 'leads'     && <OperacaoPage />}
         {tab === 'campanhas' && <CampanhasPage />}
         {tab === 'templates' && <TemplatesPage />}
       </main>

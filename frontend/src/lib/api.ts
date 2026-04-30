@@ -1,7 +1,8 @@
 import type {
   PendingItem, Stats, PipelineCounts, Lead, WaTemplate,
   OutreachTemplates, ScraperJob, WhatsappStatus, KanbanData,
-  ActivityEvent, CampaignStat,
+  ActivityEvent, CampaignStat, Briefing, MysteryConversation, SocEngTemplates,
+  OperacaoData,
 } from '@/types/api'
 
 async function req<T>(url: string, options?: RequestInit): Promise<T> {
@@ -84,4 +85,21 @@ export const api = {
   getWaQr:             () => req<{ qr: string | null }>('/api/whatsapp/qr'),
   reconnectWa:         () => post('/api/whatsapp/reconnect'),
   replayResponses:     () => post('/webhook/replay-responses'),
+  // V2
+  getBriefings:        () => req<Briefing[]>('/api/briefings'),
+  getLeadConversation: (id: string) => req<{ lead: Lead; conversations: MysteryConversation[] }>(`/api/leads/${id}/conversation`),
+  getLeadBriefing:     (id: string) => req<{ id: string; nome: string; briefing_gerado?: string; gestor_phone?: string; status: string }>(`/api/leads/${id}/briefing`),
+  getMysteryShopConfig: () => req<{ m2a_custom: string | null; m2b_custom: string | null }>('/api/mystery-shop-config'),
+  setMysteryShopConfig: (phase: 'm2a' | 'm2b', texto: string | null) =>
+    put<{ m2a_custom: string | null; m2b_custom: string | null }>(`/api/mystery-shop-config/${phase}`, { texto }),
+  getSocEngTemplates:  () => req<SocEngTemplates>('/api/social-eng-templates'),
+  updateSocEngTemplate: (variant: string, body: { nome: string; texto: string }) =>
+    put<SocEngTemplates>(`/api/social-eng-templates/${variant}`, body),
+  getOperacao:         () => req<OperacaoData>('/api/operacao'),
+  markLeadMorto:       (id: string) => post(`/api/leads/${id}/mark-morto`),
+  getEngRevisao:       () => req<any[]>('/api/eng-revisao'),
+  dispatchEngAction:   (id: string, action: 'next_eng' | 'morto' | 'handled') =>
+    post(`/api/leads/${id}/eng-action`, { action }),
+  callOutcome:         (id: string, outcome: 'fechou' | 'sem_interesse' | 'sem_resposta') =>
+    post(`/api/leads/${id}/call-outcome`, { outcome }),
 }

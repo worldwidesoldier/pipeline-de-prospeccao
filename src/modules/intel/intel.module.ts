@@ -6,8 +6,7 @@ import { CrmModule } from '../crm/crm.module';
 @Module({
   imports: [
     BullModule.registerQueue({ name: 'intel_queue' }),
-    BullModule.registerQueue({ name: 'wa_test_queue' }),
-    BullModule.registerQueue({ name: 'scoring_queue' }),
+    BullModule.registerQueue({ name: 'mystery_shop_queue' }),
     CrmModule,
   ],
   providers: [IntelProcessor],

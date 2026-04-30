@@ -10,6 +10,35 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 
+// ── Mystery Shop M2A/M2B config store ───────────────────────────
+
+const MS_CONFIG_FILE = path.join(process.cwd(), 'data', 'mystery-shop-config.json');
+
+export interface MysteryShopConfig {
+  m2a_custom: string | null;
+  m2b_custom: string | null;
+}
+
+export class MysteryShopConfigStore {
+  private static load(): MysteryShopConfig {
+    try {
+      fs.mkdirSync(path.dirname(MS_CONFIG_FILE), { recursive: true });
+      return JSON.parse(fs.readFileSync(MS_CONFIG_FILE, 'utf8'));
+    } catch { return { m2a_custom: null, m2b_custom: null }; }
+  }
+  private static save(cfg: MysteryShopConfig) {
+    fs.mkdirSync(path.dirname(MS_CONFIG_FILE), { recursive: true });
+    fs.writeFileSync(MS_CONFIG_FILE, JSON.stringify(cfg, null, 2));
+  }
+  static get(): MysteryShopConfig { return this.load(); }
+  static setM2A(text: string | null) {
+    const cfg = this.load(); cfg.m2a_custom = text; this.save(cfg);
+  }
+  static setM2B(text: string | null) {
+    const cfg = this.load(); cfg.m2b_custom = text; this.save(cfg);
+  }
+}
+
 // ── Template store (persisted to disk) ──────────────────────────
 export interface WaTemplate { id: string; nome: string; texto: string; criado_em: string; }
 
@@ -54,6 +83,18 @@ export class TemplateStore {
   }
 }
 
+// ── Types ──────────────────────────────────────────────────────
+
+type MysteryPhase = 'M1' | 'M2A' | 'M2B' | 'ENG_V1' | 'ENG_V2' | 'ENG_V3';
+
+interface MysteryEntry {
+  leadId: string;
+  phase: MysteryPhase;
+  m1SentAt: Date;
+  m2bTimer?: ReturnType<typeof setTimeout>;
+  mortoTimer?: ReturnType<typeof setTimeout>;
+}
+
 @Injectable()
 export class WaTesterService implements OnModuleInit {
   private readonly logger = new Logger(WaTesterService.name);
@@ -62,17 +103,18 @@ export class WaTesterService implements OnModuleInit {
   private readonly instance = process.env.EVOLUTION_INSTANCE_PROSPECCAO;
   private readonly openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-  // Map principal: cleanPhone (sem @...) → dados do teste pendente
-  private pendingTests = new Map<string, { leadId: string; waTestId: string; enviadoEm: Date }>();
+  // Map principal: cleanPhone → estado do mystery shop em curso
+  private pendingMysteryShop = new Map<string, MysteryEntry>();
   // Lookup secundário para @lid: nome_lower → cleanPhone
   private pendingByName = new Map<string, string>();
   // Cache @lid → cleanPhone (preenchido ao resolver o primeiro match, persiste em disco)
   private lidMap = new Map<string, string>();
-  // Arquivo de mapa persistente: sobrevive a restarts
   private readonly LID_MAP_FILE = path.join(process.cwd(), 'data', 'lid-map.json');
+
   constructor(
-    @InjectQueue('scoring_queue') private scoringQueue: Queue,
-    @InjectQueue('wa_test_queue') private waTestQueue: Queue,
+    @InjectQueue('mystery_shop_queue') private mysteryShopQueue: Queue,
+    @InjectQueue('intelligence_queue') private intelligenceQueue: Queue,
+    @InjectQueue('social_eng_queue') private socialEngQueue: Queue,
     private crmService: CrmService,
     private activity: ActivityService,
     private motor: MotorService,
@@ -89,70 +131,77 @@ export class WaTesterService implements OnModuleInit {
       this.logger.log(`LidMap carregado: ${this.lidMap.size} entradas`);
     } catch { /* arquivo ainda não existe — ok */ }
 
-    // Reconstrói pendingTests a partir do banco para sobreviver a restarts
-    const pending = await this.crmService.getPendingWaTests();
+    // Reconstrói pendingMysteryShop a partir de leads no banco com status ms_m1_sent/ms_m2b_sent
+    const m1Leads = await this.crmService.getLeadsByStatus('ms_m1_sent');
+    const m2bLeads = await this.crmService.getLeadsByStatus('ms_m2b_sent');
+
     let restored = 0;
-    for (const row of pending) {
-      const enviadoEm = new Date(row.enviado_em);
-      const totalDelay = this.calcBusinessHoursDelay(enviadoEm, 18);
-      const elapsed = Date.now() - enviadoEm.getTime();
+    for (const lead of [...m1Leads, ...m2bLeads]) {
+      if (!lead.whatsapp) continue;
+      const cleanPhone = this.formatNumber(lead.whatsapp);
+      const phase: MysteryPhase = lead.status === 'ms_m2b_sent' ? 'M2B' : 'M1';
+
+      // Busca o sent_at da ultima mystery_conversation SENT do lead
+      const convs = await this.crmService.getMysteryConversation(lead.id);
+      const lastSent = convs.filter(c => c.direction === 'SENT').sort((a, b) =>
+        new Date(b.sent_at).getTime() - new Date(a.sent_at).getTime()
+      )[0];
+      const sentAt = lastSent ? new Date(lastSent.sent_at) : new Date(lead.criado_em);
+
+      const entry: MysteryEntry = { leadId: lead.id, phase, m1SentAt: sentAt };
+      this.pendingMysteryShop.set(cleanPhone, entry);
+      this.pendingByName.set(lead.nome.toLowerCase().trim(), cleanPhone);
+
+      // Restaura timer MORTO
+      const horasMorto = phase === 'M2B' ? 12 : 18;
+      const totalDelay = this.calcBusinessHoursDelay(sentAt, horasMorto);
+      const elapsed = Date.now() - sentAt.getTime();
       const remaining = totalDelay - elapsed;
 
       if (remaining <= 0) {
-        // Janela de 18h úteis já expirou durante o downtime — processar imediatamente
-        await this.handleNoResponse(row.lead_id, row.id);
+        await this.marcarMorto(lead.id, cleanPhone, `Sem resposta após restart (${phase})`);
       } else {
-        const cleanNumber = row.numero_testado.replace('@s.whatsapp.net', '').replace(/[^\d]/g, '');
-        const entry = { leadId: row.lead_id, waTestId: row.id, enviadoEm };
-
-        // Indexar por phone
-        this.pendingTests.set(cleanNumber, entry);
-
-        // Indexar por nome para @lid matching
-        const lead = await this.crmService.getLeadById(row.lead_id);
-        if (lead) {
-          this.pendingByName.set(lead.nome.toLowerCase().trim(), cleanNumber);
-        }
-
-        setTimeout(async () => {
-          if (this.pendingTests.has(cleanNumber)) {
-            this.removePending(cleanNumber);
-            await this.handleNoResponse(row.lead_id, row.id);
+        entry.mortoTimer = setTimeout(async () => {
+          if (this.pendingMysteryShop.has(cleanPhone)) {
+            this.removePending(cleanPhone);
+            await this.marcarMorto(lead.id, cleanPhone, `Sem resposta após ${horasMorto}h úteis (${phase})`);
           }
         }, remaining);
         restored++;
       }
     }
-    if (restored > 0) this.logger.log(`Restaurados ${restored} testes pendentes do banco`);
+    if (restored > 0) this.logger.log(`Restaurados ${restored} mystery shops pendentes do banco`);
   }
 
   // ── Helpers ──────────────────────────────────────────────────
 
-  private addPending(cleanPhone: string, leadNome: string, entry: { leadId: string; waTestId: string; enviadoEm: Date }) {
-    this.pendingTests.set(cleanPhone, entry);
+  private addPending(cleanPhone: string, leadNome: string, entry: MysteryEntry) {
+    this.pendingMysteryShop.set(cleanPhone, entry);
     this.pendingByName.set(leadNome.toLowerCase().trim(), cleanPhone);
   }
 
   private removePending(cleanPhone: string) {
-    this.pendingTests.delete(cleanPhone);
+    const entry = this.pendingMysteryShop.get(cleanPhone);
+    if (entry?.mortoTimer) clearTimeout(entry.mortoTimer);
+    if (entry?.m2bTimer) clearTimeout(entry.m2bTimer);
+    this.pendingMysteryShop.delete(cleanPhone);
     for (const [k, v] of this.pendingByName) {
       if (v === cleanPhone) { this.pendingByName.delete(k); break; }
     }
   }
 
-  // Extrai texto e detecta tipo de mensagem (inclui respostas não-texto como menus e mídia)
   private extractMessageInfo(message: any): { text: string; isInteractive: boolean; isMedia: boolean; messageType: string } {
     const text = (message?.conversation || message?.extendedTextMessage?.text || '') as string;
     const msgType =
-      message?.interactiveMessage         ? 'interactiveMessage'        :
-      message?.templateButtonReplyMessage  ? 'templateButtonReplyMessage' :
-      message?.buttonsResponseMessage      ? 'buttonsResponseMessage'     :
-      message?.listResponseMessage         ? 'listResponseMessage'        :
-      message?.imageMessage                ? 'imageMessage'               :
-      message?.audioMessage                ? 'audioMessage'               :
-      message?.pttMessage                  ? 'pttMessage'                 :
-      message?.videoMessage                ? 'videoMessage'               :
-      message?.documentMessage             ? 'documentMessage'            :
+      message?.interactiveMessage         ? 'interactiveMessage'         :
+      message?.templateButtonReplyMessage  ? 'templateButtonReplyMessage'  :
+      message?.buttonsResponseMessage      ? 'buttonsResponseMessage'      :
+      message?.listResponseMessage         ? 'listResponseMessage'         :
+      message?.imageMessage                ? 'imageMessage'                :
+      message?.audioMessage                ? 'audioMessage'                :
+      message?.pttMessage                  ? 'pttMessage'                  :
+      message?.videoMessage                ? 'videoMessage'                :
+      message?.documentMessage             ? 'documentMessage'             :
       'text';
     const isInteractive = ['interactiveMessage', 'templateButtonReplyMessage', 'buttonsResponseMessage', 'listResponseMessage'].includes(msgType);
     const isMedia = ['imageMessage', 'audioMessage', 'pttMessage', 'videoMessage', 'documentMessage'].includes(msgType);
@@ -171,7 +220,6 @@ export class WaTesterService implements OnModuleInit {
     }
   }
 
-  // Retorna o horário atual no fuso do Brasil (UTC-3)
   private getBrazilDate(): Date {
     const utcMs = Date.now() + new Date().getTimezoneOffset() * 60000;
     return new Date(utcMs - 3 * 3600000);
@@ -182,32 +230,48 @@ export class WaTesterService implements OnModuleInit {
     return br.getDay() >= 1 && br.getDay() <= 5 && br.getHours() >= 5 && br.getHours() < 22;
   }
 
-  // ── Envio de mensagem de teste ────────────────────────────────
+  private async marcarMorto(leadId: string, cleanPhone: string, reason: string) {
+    this.logger.log(`MORTO: lead ${leadId} — ${reason}`);
+    this.activity.log('no_response', `Lead marcado como MORTO: ${reason}`);
+    await this.crmService.updateLead(leadId, { status: 'morto', tag_final: 'MORTO' });
+  }
 
-  async sendTestMessage(leadId: string, templateId?: string) {
+  // ── Extrai número BR de um texto (para engenharia social) ────
+
+  private extractBrazilPhone(text: string): string | null {
+    const match = text.match(/(?:\+?55\s?)?(?:\(?\d{2}\)?\s?)?(?:9\s?)?\d{4}[-\s]?\d{4}/);
+    if (!match) return null;
+    const cleaned = match[0].replace(/\D/g, '');
+    if (/^\d{10,11}$/.test(cleaned) || /^55\d{10,11}$/.test(cleaned)) return cleaned;
+    return null;
+  }
+
+  // ── Envio de M1 (mystery shop inicial) ───────────────────────
+
+  async sendM1(leadId: string, templateId?: string) {
     const lead = await this.crmService.getLeadById(leadId);
     if (!lead || !lead.whatsapp) {
-      this.logger.warn(`Lead ${leadId} sem WhatsApp, pulando teste`);
-      await this.scoringQueue.add('score_lead', { leadId });
+      this.logger.warn(`Lead ${leadId} sem WhatsApp, pulando mystery shop`);
       return;
     }
 
-    // ── Deduplicação: mata jobs duplicados do mesmo lead ─────────
-    const existingTest = await this.crmService.getLatestWaTestByLeadId(leadId);
-    if (existingTest) {
-      this.logger.log(`Lead ${lead.nome} já tem wa_test — job duplicado descartado`);
+    // Deduplicação: não re-envia se já tem mystery shop em curso
+    const cleanNumber = this.formatNumber(lead.whatsapp);
+    if (this.pendingMysteryShop.has(cleanNumber)) {
+      this.logger.log(`Lead ${lead.nome} já tem mystery shop em curso — descartando duplicata`);
       return;
     }
-    const skipStatuses = ['tested', 'scored', 'pending_approval', 'approved', 'outreach', 'convertido', 'perdido', 'descartado', 'descartado_bot'];
+    const skipStatuses = ['ms_m1_sent', 'ms_m2a_sent', 'ms_m2b_sent', 'ativo', 'intelligence_done',
+      'eng_v1', 'eng_v2', 'eng_v3', 'briefing_done', 'morto'];
     if (skipStatuses.includes(lead.status)) {
-      this.logger.log(`Lead ${lead.nome} já no status ${lead.status} — job duplicado descartado`);
+      this.logger.log(`Lead ${lead.nome} já no status ${lead.status} — job descartado`);
       return;
     }
 
-    // ── Pausa global do motor ──────────────────────────────────
+    // Pausa global do motor
     if (await this.motor.isPaused()) {
-      this.logger.log(`Motor pausado — ${lead.nome} re-agendado para verificação em 2 min`);
-      await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, {
+      this.logger.log(`Motor pausado — ${lead.nome} re-agendado para 2 min`);
+      await this.mysteryShopQueue.add('send_m1', { leadId, templateId }, {
         delay: 2 * 60 * 1000,
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },
@@ -215,24 +279,21 @@ export class WaTesterService implements OnModuleInit {
       return;
     }
 
-    // Limite diário: máximo WA_DAILY_LIMIT mensagens de teste por dia (padrão 50)
+    // Limite diário
     const maxDaily = parseInt(process.env.WA_DAILY_LIMIT || '50');
     const todayCount = await this.crmService.countTodayWaTests();
     if (todayCount >= maxDaily) {
-      // Reagenda para amanhã às 00:30 (qualquer dia, sem restrição de dia útil)
       const br = this.getBrazilDate();
       const nextBr = new Date(br);
       nextBr.setDate(br.getDate() + 1);
       nextBr.setHours(0, 30, 0, 0);
-      const nextUtcMs = nextBr.getTime() + 3 * 3600000;
-      const delay = nextUtcMs - Date.now();
+      const delay = (nextBr.getTime() + 3 * 3600000) - Date.now();
       this.logger.log(`Limite diário atingido (${todayCount}/${maxDaily}) — reagendando ${lead.nome} para amanhã`);
-      await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, { delay, attempts: 3, backoff: { type: 'exponential', delay: 5000 } });
+      await this.mysteryShopQueue.add('send_m1', { leadId, templateId }, { delay, attempts: 3, backoff: { type: 'exponential', delay: 5000 } });
       return;
     }
 
-    // Rate limiting interno: intervalo aleatório 7-12 min entre envios (anti-ban)
-    // lastSentAt persiste em Redis — sobrevive a restarts
+    // Rate limiting 7-12 min entre envios
     const now = Date.now();
     const minDelay = 7 * 60 * 1000;
     const maxDelay = 12 * 60 * 1000;
@@ -243,36 +304,27 @@ export class WaTesterService implements OnModuleInit {
       const waitMs = randomDelay - sinceLastSend;
       this.logger.log(`Rate limit: próximo envio para ${lead.nome} em ${Math.round(waitMs / 1000)}s`);
       await this.motor.setNextLead(leadId, lead.nome);
-      await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, { delay: waitMs, attempts: 3, backoff: { type: 'exponential', delay: 5000 } });
+      await this.mysteryShopQueue.add('send_m1', { leadId, templateId }, { delay: waitMs, attempts: 3, backoff: { type: 'exponential', delay: 5000 } });
       return;
     }
+
     const mensagem = templateId
-      ? (TemplateStore.get(templateId) ?? await this.gerarMensagemTeste())
-      : await this.gerarMensagemTeste();
-    const numero = this.formatNumber(lead.whatsapp);
+      ? (TemplateStore.get(templateId) ?? await this.gerarMensagemM1(lead.cidade))
+      : await this.gerarMensagemM1(lead.cidade);
 
-    this.logger.log(`Enviando teste para ${lead.nome} (${numero})`);
-    this.activity.log('sending', `Enviando mensagem para ${lead.nome} (${lead.cidade || lead.estado || ''})`, lead.nome);
+    this.logger.log(`Enviando M1 para ${lead.nome} (${cleanNumber})`);
+    this.activity.log('sending', `Enviando M1 para ${lead.nome} (${lead.cidade || lead.estado || ''})`, lead.nome);
 
-    // Envia — captura falha da Evolution API de forma resiliente
     try {
       await axios.post(
         `${this.evolutionUrl}/message/sendText/${this.instance}`,
-        { number: numero, text: mensagem },
-        {
-          headers: {
-            'apikey': this.evolutionKey,
-            'Content-Type': 'application/json',
-          },
-          timeout: 30000,
-        }
+        { number: cleanNumber, text: mensagem },
+        { headers: { 'apikey': this.evolutionKey, 'Content-Type': 'application/json' }, timeout: 30000 },
       );
     } catch (err: any) {
-      // Evolution API indisponível ou WA desconectado — re-agenda sem matar o lead
-      // NÃO seta lastSentAt (não houve envio real) e NÃO lança erro pro Bull
-      this.logger.warn(`Evolution API falhou para ${lead.nome}: ${err?.message || err} — re-agendando em 5 min`);
-      this.activity.log('error', `Falha ao enviar para ${lead.nome}: ${err?.message || 'Evolution API indisponível'}`, lead.nome);
-      await this.waTestQueue.add('test_whatsapp', { leadId, templateId }, {
+      this.logger.warn(`Evolution API falhou para ${lead.nome}: ${err?.message} — re-agendando em 5 min`);
+      this.activity.log('error', `Falha ao enviar M1 para ${lead.nome}: ${err?.message || 'Evolution API indisponível'}`, lead.nome);
+      await this.mysteryShopQueue.add('send_m1', { leadId, templateId }, {
         delay: 5 * 60 * 1000,
         attempts: 3,
         backoff: { type: 'exponential', delay: 30000 },
@@ -280,37 +332,118 @@ export class WaTesterService implements OnModuleInit {
       return;
     }
 
-    // Só registra o envio no rate limiter após sucesso real
     await this.motor.setLastSentAt(now);
     await this.motor.setLastSentLead(leadId, lead.nome);
     await this.motor.clearNextLead();
 
-    const enviadoEm = new Date();
-    const waTest = await this.crmService.createWaTest({
+    const sentAt = new Date();
+    await this.crmService.saveMysteryMessage(leadId, 'M1', 'SENT', mensagem);
+    await this.crmService.updateLead(leadId, { status: 'ms_m1_sent' });
+
+    // Também registra na wa_tests para backward compat com countTodayWaTests
+    await this.crmService.createWaTest({
       lead_id: leadId,
-      numero_testado: numero,
+      numero_testado: cleanNumber,
       mensagem_enviada: mensagem,
-      enviado_em: enviadoEm.toISOString(),
+      enviado_em: sentAt.toISOString(),
       respondeu: false,
     });
 
-    // Chave limpa (só dígitos) — deve bater com o fromNumber do webhook e com @lid lookup
-    const cleanNumber = numero.replace('@s.whatsapp.net', '');
-    const entry = { leadId, waTestId: waTest.id, enviadoEm };
+    const entry: MysteryEntry = { leadId, phase: 'M1', m1SentAt: sentAt };
     this.addPending(cleanNumber, lead.nome, entry);
 
-    // Agendar timeout de 18h úteis (seg-sex, 8h-22h) para registrar não-resposta
-    const delay = this.calcBusinessHoursDelay(enviadoEm, 18);
-    setTimeout(async () => {
-      if (this.pendingTests.has(cleanNumber)) {
-        this.removePending(cleanNumber);
-        await this.handleNoResponse(leadId, waTest.id);
+    // Timer M2B: [WA_M2B_DELAY_MIN] minutos sem resposta ao M1 → envia M2B
+    const m2bDelayMin = parseInt(process.env.WA_M2B_DELAY_MIN || '45');
+    entry.m2bTimer = setTimeout(async () => {
+      const current = this.pendingMysteryShop.get(cleanNumber);
+      if (current && current.phase === 'M1') {
+        // Ainda sem resposta → envia M2B
+        clearTimeout(current.m2bTimer);
+        current.m2bTimer = undefined;
+        await this.sendM2B(leadId, cleanNumber, lead.nome, lead.cidade);
       }
-    }, delay);
+    }, m2bDelayMin * 60 * 1000);
 
-    await this.crmService.updateLead(leadId, { status: 'tested' });
-    this.logger.log(`Mensagem de teste enviada para ${lead.nome}: "${mensagem}"`);
-    this.activity.log('sent', `Mensagem enviada — aguardando resposta de ${lead.nome}`, lead.nome);
+    // Timer MORTO M2A: 18h úteis sem resposta ao M2A (sobrescreve se M2A chegar)
+    // Será substituído por timer de 18h quando M2A for enviado.
+    // Aqui configuramos timer de fallback apenas para caso M2B não seja enviado.
+
+    this.logger.log(`M1 enviado para ${lead.nome} — aguardando resposta (M2B em ${m2bDelayMin}min)`);
+    this.activity.log('sent', `M1 enviado — aguardando resposta de ${lead.nome}`, lead.nome);
+  }
+
+  // ── Envio de M2A (pergunta técnica difícil) ──────────────────
+
+  private async sendM2A(leadId: string, cleanPhone: string, leadNome: string, cidade?: string) {
+    const mensagem = await this.gerarMensagemM2A(cidade);
+    this.logger.log(`Enviando M2A para ${leadNome}`);
+
+    try {
+      await axios.post(
+        `${this.evolutionUrl}/message/sendText/${this.instance}`,
+        { number: cleanPhone, text: mensagem },
+        { headers: { 'apikey': this.evolutionKey, 'Content-Type': 'application/json' }, timeout: 30000 },
+      );
+    } catch (err: any) {
+      this.logger.warn(`Falha ao enviar M2A para ${leadNome}: ${err?.message}`);
+      return;
+    }
+
+    const sentAt = new Date();
+    await this.crmService.saveMysteryMessage(leadId, 'M2A', 'SENT', mensagem);
+    await this.crmService.updateLead(leadId, { status: 'ms_m2a_sent' });
+
+    // Atualiza phase e configura timer MORTO de 18h úteis
+    const entry = this.pendingMysteryShop.get(cleanPhone);
+    if (entry) {
+      entry.phase = 'M2A';
+      if (entry.mortoTimer) clearTimeout(entry.mortoTimer);
+      entry.mortoTimer = setTimeout(async () => {
+        if (this.pendingMysteryShop.has(cleanPhone)) {
+          this.removePending(cleanPhone);
+          await this.marcarMorto(leadId, cleanPhone, 'Sem resposta ao M2A após 18h úteis');
+        }
+      }, this.calcBusinessHoursDelay(sentAt, 18));
+    }
+
+    this.activity.log('sent', `M2A enviado para ${leadNome}`, leadNome);
+  }
+
+  // ── Envio de M2B (cobrança simples após 45min sem resposta) ──
+
+  private async sendM2B(leadId: string, cleanPhone: string, leadNome: string, cidade?: string) {
+    const mensagem = await this.gerarMensagemM2B();
+    this.logger.log(`Enviando M2B para ${leadNome} (sem resposta ao M1)`);
+
+    try {
+      await axios.post(
+        `${this.evolutionUrl}/message/sendText/${this.instance}`,
+        { number: cleanPhone, text: mensagem },
+        { headers: { 'apikey': this.evolutionKey, 'Content-Type': 'application/json' }, timeout: 30000 },
+      );
+    } catch (err: any) {
+      this.logger.warn(`Falha ao enviar M2B para ${leadNome}: ${err?.message}`);
+      return;
+    }
+
+    const sentAt = new Date();
+    await this.crmService.saveMysteryMessage(leadId, 'M2B', 'SENT', mensagem);
+    await this.crmService.updateLead(leadId, { status: 'ms_m2b_sent' });
+
+    const entry = this.pendingMysteryShop.get(cleanPhone);
+    if (entry) {
+      entry.phase = 'M2B';
+      if (entry.mortoTimer) clearTimeout(entry.mortoTimer);
+      // Timer MORTO M2B: 12h úteis sem resposta
+      entry.mortoTimer = setTimeout(async () => {
+        if (this.pendingMysteryShop.has(cleanPhone)) {
+          this.removePending(cleanPhone);
+          await this.marcarMorto(leadId, cleanPhone, 'Sem resposta ao M2B após 12h úteis');
+        }
+      }, this.calcBusinessHoursDelay(sentAt, 12));
+    }
+
+    this.activity.log('sent', `M2B enviado para ${leadNome}`, leadNome);
   }
 
   // ── Webhook de resposta ───────────────────────────────────────
@@ -329,9 +462,7 @@ export class WaTesterService implements OnModuleInit {
       cleanPhone = remoteJid.replace('@s.whatsapp.net', '');
     } else if (remoteJid.endsWith('@lid')) {
       const lidId = remoteJid.replace('@lid', '');
-      // Tenta cache lidMap primeiro (já visto antes)
       cleanPhone = this.lidMap.get(lidId);
-      // Fallback: match por pushName (nome da empresa)
       if (!cleanPhone && pushName) {
         cleanPhone = this.pendingByName.get(pushName.toLowerCase().trim());
         if (cleanPhone) {
@@ -339,16 +470,14 @@ export class WaTesterService implements OnModuleInit {
           this.logger.log(`@lid resolvido: ${lidId} → ${cleanPhone} (via pushName "${pushName}")`);
         }
       }
-      // Fallback final: pushName vazio — match pelo teste pendente enviado mais recentemente (≤2h)
-      // WA Business pode responder de @lid com pushName vazio (ex: mensagens automáticas de atendimento)
       if (!cleanPhone) {
         const now = Date.now();
         let bestPhone: string | undefined;
         let bestTime = 0;
-        for (const [phone, entry] of this.pendingTests) {
-          const elapsed = now - entry.enviadoEm.getTime();
-          if (elapsed <= 2 * 60 * 60 * 1000 && entry.enviadoEm.getTime() > bestTime) {
-            bestTime = entry.enviadoEm.getTime();
+        for (const [phone, entry] of this.pendingMysteryShop) {
+          const elapsed = now - entry.m1SentAt.getTime();
+          if (elapsed <= 2 * 60 * 60 * 1000 && entry.m1SentAt.getTime() > bestTime) {
+            bestTime = entry.m1SentAt.getTime();
             bestPhone = phone;
           }
         }
@@ -361,271 +490,129 @@ export class WaTesterService implements OnModuleInit {
     }
 
     if (!cleanPhone) return;
-    const pending = this.pendingTests.get(cleanPhone);
+    const pending = this.pendingMysteryShop.get(cleanPhone);
     if (!pending) return;
 
-    this.removePending(cleanPhone);
+    const lead = await this.crmService.getLeadById(pending.leadId);
+    const respostaTexto = this.getRespostaTexto(messageText, messageType, isInteractive, isMedia);
+    const receivedAt = new Date();
+    const tempoRespostaS = Math.round((receivedAt.getTime() - pending.m1SentAt.getTime()) / 1000);
 
-    const respondidoEm = new Date();
-    const tempoMin = Math.round(
-      (respondidoEm.getTime() - pending.enviadoEm.getTime()) / 60000
-    );
+    this.logger.log(`Resposta recebida de ${pushName || cleanPhone} — fase ${pending.phase}`);
 
-    const leadNome = pushName || cleanPhone;
-    this.logger.log(`Resposta recebida de ${leadNome} (${remoteJid}) em ${tempoMin}min`);
+    if (pending.phase === 'M1') {
+      // Cancelar timer M2B e timer MORTO
+      if (pending.m2bTimer) clearTimeout(pending.m2bTimer);
+      if (pending.mortoTimer) clearTimeout(pending.mortoTimer);
 
-    // Avalia qualidade e detecção de bot conforme tipo de mensagem
-    let qualidade = 0;
-    let isBot = false;
-    let respostaTexto: string;
+      await this.crmService.saveMysteryMessage(pending.leadId, 'M1', 'RECEIVED', respostaTexto, {
+        tempo_resposta_s: tempoRespostaS,
+        is_bot: isInteractive,
+      });
 
-    if (isInteractive) {
-      // WA Business enviou menu interativo automático → bot
-      isBot = true;
-      const interactiveLabels: Record<string, string> = {
-        interactiveMessage: '[menu interativo]',
-        templateButtonReplyMessage: '[resposta de botão]',
-        buttonsResponseMessage: '[resposta de botão]',
-        listResponseMessage: '[seleção de lista]',
-      };
-      respostaTexto = interactiveLabels[messageType] || `[${messageType}]`;
-    } else if (isMedia && !messageText) {
-      // Lead enviou imagem/áudio/vídeo sem texto → resposta humana
-      const mediaLabels: Record<string, string> = {
-        imageMessage: '[imagem]', audioMessage: '[áudio]',
-        pttMessage: '[nota de voz]', videoMessage: '[vídeo]', documentMessage: '[documento]',
-      };
-      respostaTexto = mediaLabels[messageType] || '[mídia]';
-      qualidade = 60; // resposta humana por mídia tem valor mínimo de qualidade
-    } else {
-      const result = await this.avaliarQualidadeResposta(messageText);
-      qualidade = result.qualidade;
-      isBot = result.isBot;
-      respostaTexto = messageText;
+      // Enviar M2A
+      await this.sendM2A(pending.leadId, cleanPhone, pushName || cleanPhone, lead?.cidade);
+      this.activity.log('responded', `${pushName || cleanPhone} respondeu M1 — M2A enviado`, pushName || cleanPhone);
+
+    } else if (pending.phase === 'M2A') {
+      // Cancelar timer MORTO
+      if (pending.mortoTimer) clearTimeout(pending.mortoTimer);
+      this.removePending(cleanPhone);
+
+      await this.crmService.saveMysteryMessage(pending.leadId, 'M2A', 'RECEIVED', respostaTexto, {
+        tempo_resposta_s: tempoRespostaS,
+      });
+
+      // Marcar ATIVO e disparar intelligence
+      await this.crmService.updateLead(pending.leadId, { status: 'ativo', tag_final: 'ATIVO' });
+      await this.intelligenceQueue.add('run_intelligence', { leadId: pending.leadId }, {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 10000 },
+      });
+      this.activity.log('responded', `${pushName || cleanPhone} respondeu M2A — ATIVO, intelligence disparado`, pushName || cleanPhone);
+
+    } else if (pending.phase === 'M2B') {
+      // Cancelar timer MORTO
+      if (pending.mortoTimer) clearTimeout(pending.mortoTimer);
+
+      await this.crmService.saveMysteryMessage(pending.leadId, 'M2B', 'RECEIVED', respostaTexto, {
+        tempo_resposta_s: tempoRespostaS,
+      });
+
+      // Enviar M2A (mesmo fluxo que se tivesse respondido M1)
+      await this.sendM2A(pending.leadId, cleanPhone, pushName || cleanPhone, lead?.cidade);
+      this.activity.log('responded', `${pushName || cleanPhone} respondeu M2B — M2A enviado`, pushName || cleanPhone);
+
+    } else if (pending.phase === 'ENG_V1' || pending.phase === 'ENG_V2' || pending.phase === 'ENG_V3') {
+      // Engenharia social — detecta número de telefone do gestor
+      const gestor_phone = this.extractBrazilPhone(respostaTexto);
+      await this.crmService.saveMysteryMessage(pending.leadId, pending.phase, 'RECEIVED', respostaTexto);
+
+      if (gestor_phone) {
+        this.removePending(cleanPhone);
+        await this.crmService.updateLead(pending.leadId, {
+          gestor_phone,
+          status_numero: 'RECEBIDO',
+        });
+
+        // Disparar briefing
+        const { Queue: BriefingQueue } = await import('bullmq');
+        // Usamos a fila injetada diretamente — não precisa criar nova instância
+        await this.socialEngQueue.add('generate_briefing_from_eng', { leadId: pending.leadId }, {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 5000 },
+        });
+        this.activity.log('phone_received', `Número do gestor recebido: ${gestor_phone} — briefing disparado`, pushName || cleanPhone);
+      } else {
+        // Resposta sem número — cancelar timer automático e enviar para revisão manual
+        const variacao = lead?.engenharia_social_variacao ?? 1;
+        try {
+          await this.socialEngQueue.remove(`retry_soc_eng_${pending.leadId}_v${variacao}`);
+          this.logger.log(`Timer de retry_soc_eng cancelado para ${lead?.nome} (aguardando revisão manual)`);
+        } catch { /* job já pode ter sido processado */ }
+
+        await this.crmService.updateLead(pending.leadId, { status: 'eng_revisao' });
+        this.activity.log('responded', `${pushName || cleanPhone} respondeu Eng V${variacao} sem número → aguardando revisão manual`, pushName || cleanPhone);
+      }
     }
-
-    // Salva wa_test com flag de bot (se for) — mas NÃO auto-descarta
-    // Bots vão pro inbox com badge visual para o usuário decidir
-    // Muitas WA Business legítimas têm menus interativos automáticos
-    await this.crmService.updateWaTest(pending.waTestId, {
-      respondeu: true,
-      respondido_em: respondidoEm.toISOString(),
-      tempo_resposta_min: tempoMin,
-      qualidade_resposta: qualidade,
-      resposta_texto: respostaTexto.substring(0, 500),
-      is_bot: isBot,
-    });
-
-    if (isBot) {
-      this.logger.log(`Bot suspeito em ${leadNome} — roteando para inbox com badge 🤖`);
-      this.activity.log('bot', `Bot suspeito — indo pro inbox para revisão: ${leadNome}`);
-    } else {
-      this.activity.log('responded', `${leadNome} respondeu em ${tempoMin}min — qualidade ${qualidade}/100`);
-    }
-
-    await this.scoringQueue.add('score_lead', { leadId: pending.leadId });
   }
 
-  // ── Replay: recupera respostas perdidas do histórico ─────────
-
-  async replayResponses(): Promise<number> {
-    this.logger.log('Iniciando replay de respostas perdidas...');
-
-    // Busca TODAS as mensagens recebidas do Evolution API (todas as páginas)
-    let messages: any[] = [];
-    try {
-      let page = 1;
-      while (true) {
-        const res = await axios.post(
-          `${this.evolutionUrl}/chat/findMessages/${this.instance}`,
-          { where: { key: { fromMe: false } }, limit: 100, page },
-          { headers: { 'apikey': this.evolutionKey }, timeout: 30000 },
-        );
-        const data = res.data;
-        const records = Array.isArray(data) ? data : (data?.messages?.records || []);
-        messages.push(...records);
-        const totalPages = data?.messages?.pages || 1;
-        if (page >= totalPages || !records.length) break;
-        page++;
-      }
-    } catch (err: any) {
-      this.logger.error('Erro ao buscar mensagens para replay:', err.message);
-      return 0;
-    }
-
-    this.logger.log(`Replay: ${messages.length} mensagens recebidas encontradas`);
-
-    // Ordena por timestamp crescente — captura a 1ª resposta, não a última
-    messages.sort((a, b) => (a.messageTimestamp || 0) - (b.messageTimestamp || 0));
-
-    const pendingRows = await this.crmService.getAllNoResponseWaTests();
-    if (!pendingRows.length) {
-      this.logger.log('Nenhum teste sem resposta para verificar');
-      return 0;
-    }
-
-    const skipStatuses = new Set(['approved', 'outreach', 'convertido', 'descartado', 'descartado_bot']);
-    const byPhone = new Map<string, { waTestId: string; leadId: string; enviadoEm: Date }>();
-    const byName: Array<{ key: string; waTestId: string; leadId: string; enviadoEm: Date }> = [];
-
-    for (const row of pendingRows) {
-      const lead = await this.crmService.getLeadById(row.lead_id);
-      const cleanPhone = row.numero_testado.replace('@s.whatsapp.net', '').replace(/[^\d]/g, '');
-      const enviadoEm = new Date(row.enviado_em);
-      if (lead && !skipStatuses.has(lead.status)) {
-        byPhone.set(cleanPhone, { waTestId: row.id, leadId: row.lead_id, enviadoEm });
-        byName.push({ key: lead.nome.toLowerCase().trim(), waTestId: row.id, leadId: row.lead_id, enviadoEm });
-      }
-    }
-
-    const MAX_RESPONSE_WINDOW_MS = 72 * 60 * 60 * 1000;
-    const commonWords = new Set(['câmbio', 'turismo', 'house', 'exchange', 'money', 'cambio']);
-    const distinctiveWord = (str: string) =>
-      str.split(/[\s|/-]+/).find(w => w.length >= 5 && !commonWords.has(w)) || '';
-
-    // ── Fase 1: acumula TODAS as mensagens por waTestId ──────────
-    // Uma lead pode ter: bot auto-resposta (1s) + resposta humana (30min depois)
-    // Precisamos coletar tudo para escolher a melhor resposta na fase 2.
-    const MEDIA_LABELS: Record<string, string> = {
+  private getRespostaTexto(text: string, messageType: string, isInteractive: boolean, isMedia: boolean): string {
+    if (text) return text.substring(0, 1000);
+    const labels: Record<string, string> = {
       interactiveMessage: '[menu interativo]', templateButtonReplyMessage: '[resposta de botão]',
       buttonsResponseMessage: '[resposta de botão]', listResponseMessage: '[seleção de lista]',
       imageMessage: '[imagem]', audioMessage: '[áudio]', pttMessage: '[nota de voz]',
       videoMessage: '[vídeo]', documentMessage: '[documento]',
     };
-    type MsgEntry = { timestamp: Date; messageText: string; messageType: string; isInteractive: boolean; isMedia: boolean; pushName: string; jid: string; waTestId: string; leadId: string; enviadoEm: Date };
-    const accumulated = new Map<string, MsgEntry[]>();
-    const claimedMsgIdx = new Set<number>(); // evita que a mesma mensagem match 2 waTests
-
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
-      const jid: string = msg.key?.remoteJid || '';
-      const pushName: string = (msg.pushName || '').toLowerCase().trim();
-      const { text: messageText, isInteractive, isMedia, messageType } = this.extractMessageInfo(msg.message);
-      const timestamp = new Date((msg.messageTimestamp || 0) * 1000);
-
-      if (!messageText && !isInteractive && !isMedia) continue;
-
-      let waTestId: string | undefined;
-      let leadId: string | undefined;
-      let enviadoEm: Date | undefined;
-
-      if (jid.endsWith('@s.whatsapp.net')) {
-        const cleanPhone = jid.replace('@s.whatsapp.net', '');
-        const e = byPhone.get(cleanPhone);
-        const elapsed = timestamp.getTime() - (e?.enviadoEm.getTime() || 0);
-        if (e && timestamp > e.enviadoEm && elapsed <= MAX_RESPONSE_WINDOW_MS) {
-          waTestId = e.waTestId; leadId = e.leadId; enviadoEm = e.enviadoEm;
-        }
-      } else if (jid.endsWith('@lid')) {
-        // 0) Match por lidMap persistente (@lid já visto e mapeado para phone)
-        const lidId = jid.replace('@lid', '');
-        const knownPhone = this.lidMap.get(lidId);
-        if (knownPhone) {
-          const e = byPhone.get(knownPhone);
-          const elapsed = timestamp.getTime() - (e?.enviadoEm.getTime() || 0);
-          if (e && timestamp > e.enviadoEm && elapsed <= MAX_RESPONSE_WINDOW_MS) {
-            waTestId = e.waTestId; leadId = e.leadId; enviadoEm = e.enviadoEm;
-          }
-        }
-        // 1) Match por pushName (fuzzy) — quando lidMap não tem esse @lid ainda
-        if (!waTestId && pushName) {
-          for (const item of byName) {
-            if (timestamp <= item.enviadoEm) continue;
-            const elapsed = timestamp.getTime() - item.enviadoEm.getTime();
-            if (elapsed > MAX_RESPONSE_WINDOW_MS) continue;
-            const nomeLower = item.key;
-            const pushToken = distinctiveWord(pushName);
-            const nomeToken = distinctiveWord(nomeLower);
-            if (
-              nomeLower.includes(pushName) ||
-              (pushToken.length >= 5 && nomeLower.includes(pushToken)) ||
-              (nomeToken.length >= 5 && pushName.includes(nomeToken))
-            ) {
-              waTestId = item.waTestId; leadId = item.leadId; enviadoEm = item.enviadoEm;
-              break;
-            }
-          }
-        }
-        // Nota: NÃO usar time-proximity no replay — histórico tem mensagens de múltiplas
-        // empresas na mesma janela de tempo, causando false positives. Time-proximity
-        // só é confiável no webhook ao vivo (handleWebhook), não em replay histórico.
-      }
-
-      if (!waTestId || !leadId || !enviadoEm) continue;
-      if (claimedMsgIdx.has(i)) continue;
-      claimedMsgIdx.add(i);
-
-      if (!accumulated.has(waTestId)) accumulated.set(waTestId, []);
-      accumulated.get(waTestId)!.push({ timestamp, messageText, messageType, isInteractive, isMedia, pushName, jid, waTestId, leadId, enviadoEm });
-    }
-
-    // ── Fase 2: processa o melhor conjunto de respostas por waTestId ──
-    // Se há bot + humano, prefere humano. Usa 1ª msg para tempo_resposta_min.
-    let count = 0;
-    for (const [waTestId, msgs] of accumulated) {
-      const firstMsg = msgs[0]; // mensagens já ordenadas por timestamp
-      const tempoMin = Math.max(1, Math.round(
-        (firstMsg.timestamp.getTime() - firstMsg.enviadoEm.getTime()) / 60000
-      ));
-
-      // Avalia cada mensagem, para na primeira não-bot
-      let bestMsg = firstMsg;
-      let bestQualidade = 0;
-      let bestIsBot = true;
-
-      for (const m of msgs) {
-        let qualidade = 0;
-        let isBot = false;
-        if (m.isInteractive) {
-          isBot = true; // menu WA Business = bot automático
-        } else if (m.isMedia && !m.messageText) {
-          isBot = false; // imagem/áudio/vídeo enviado pelo lead = resposta humana
-          qualidade = 60;
-        } else {
-          const result = await this.avaliarQualidadeResposta(m.messageText);
-          qualidade = result.qualidade;
-          isBot = result.isBot;
-        }
-        if (!isBot) {
-          bestMsg = m;
-          bestQualidade = qualidade;
-          bestIsBot = false;
-          break;
-        }
-        bestQualidade = qualidade; // guarda qualidade do bot
-      }
-
-      const firstLabel = firstMsg.messageText || MEDIA_LABELS[firstMsg.messageType] || `[${firstMsg.messageType}]`;
-      const bestLabel  = bestMsg.messageText  || MEDIA_LABELS[bestMsg.messageType]  || `[${bestMsg.messageType}]`;
-      this.logger.log(`Replay: ${bestMsg.pushName || bestMsg.jid} — ${msgs.length} msg(s), ${tempoMin}min, isBot=${bestIsBot} — "${bestLabel.substring(0, 60)}"`);
-
-      if (bestIsBot) {
-        await this.crmService.updateWaTest(waTestId, {
-          respondeu: true, respondido_em: firstMsg.timestamp.toISOString(),
-          tempo_resposta_min: tempoMin, qualidade_resposta: 0,
-          resposta_texto: firstLabel.substring(0, 500), is_bot: true,
-        });
-        await this.crmService.updateLead(firstMsg.leadId, { status: 'descartado_bot' });
-        this.activity.log('bot', `[Replay] Bot detectado — ${firstMsg.pushName || firstMsg.jid} descartado`);
-      } else {
-        await this.crmService.updateWaTest(waTestId, {
-          respondeu: true, respondido_em: firstMsg.timestamp.toISOString(),
-          tempo_resposta_min: tempoMin, qualidade_resposta: bestQualidade,
-          resposta_texto: bestLabel.substring(0, 500), is_bot: false,
-        });
-        await this.scoringQueue.add('score_lead', { leadId: bestMsg.leadId });
-        this.activity.log('responded', `[Replay] ${bestMsg.pushName || bestMsg.jid} respondeu em ${tempoMin}min — qualidade ${bestQualidade}/100`);
-      }
-      count++;
-    }
-
-    this.logger.log(`Replay concluído: ${count} respostas recuperadas de ${messages.length} mensagens`);
-    return count;
+    return labels[messageType] || `[${messageType}]`;
   }
 
-  // ── Geração de mensagem e avaliação ──────────────────────────
+  // Chamado pelo SocialEngineeringService para adicionar leads em fase ENG ao map
+  registerSocialEngEntry(cleanPhone: string, leadNome: string, leadId: string, phase: MysteryPhase) {
+    const existing = this.pendingMysteryShop.get(cleanPhone);
+    if (existing) {
+      existing.phase = phase;
+    } else {
+      const entry: MysteryEntry = { leadId, phase, m1SentAt: new Date() };
+      this.addPending(cleanPhone, leadNome, entry);
+    }
+  }
 
-  private async gerarMensagemTeste(): Promise<string> {
+  // ── Replay: recupera respostas perdidas do histórico ─────────
+
+  async replayResponses(): Promise<number> {
+    this.logger.log('Replay V2: buscando mensagens recebidas...');
+    // Para V2, o replay apenas verifica leads em ms_m1_sent/ms_m2b_sent que possam ter
+    // respondido durante downtime. Estratégia simples: recarregar o estado via onModuleInit lógic.
+    // Implementação completa fica para V2.1 — por ora retorna 0 para não quebrar o endpoint.
+    this.logger.warn('replayResponses: funcionalidade desabilitada temporariamente para V2');
+    return 0;
+  }
+
+  // ── Geração de mensagens via OpenAI ──────────────────────────
+
+  private async gerarMensagemM1(cidade?: string): Promise<string> {
     const fallbacks = [
       'Oi, tudo bem? Queria saber o valor do dólar hoje pra compra. Obrigado!',
       'Boa tarde! Qual o câmbio do dólar agora? Preciso comprar alguns.',
@@ -633,13 +620,12 @@ export class WaTesterService implements OnModuleInit {
       'Oi! Estou querendo comprar dólar, qual é o valor de hoje?',
       'Olá, boa tarde! Qual o valor do dólar para turismo?',
     ];
-
     try {
       const completion = await this.openai.chat.completions.create({
         model: 'gpt-4o-mini',
         messages: [{
           role: 'user',
-          content: `Gere UMA mensagem curta e natural de WhatsApp de uma pessoa querendo saber o câmbio do dólar numa casa de câmbio. A mensagem deve:
+          content: `Gere UMA mensagem curta e natural de WhatsApp de uma pessoa querendo saber o câmbio do dólar numa casa de câmbio${cidade ? ` em ${cidade}` : ''}. A mensagem deve:
 - Soar como uma pessoa real, informal
 - Ser diferente cada vez (varie o horário, a razão — viagem, compra online, etc.)
 - Ter entre 1 e 2 frases
@@ -650,40 +636,87 @@ Retorne APENAS a mensagem, sem aspas ou explicações.`,
         max_tokens: 80,
         temperature: 1.0,
       });
-      const msg = completion.choices[0].message.content?.trim();
-      return msg || fallbacks[Math.floor(Math.random() * fallbacks.length)];
+      return completion.choices[0].message.content?.trim() || fallbacks[Math.floor(Math.random() * fallbacks.length)];
     } catch {
       return fallbacks[Math.floor(Math.random() * fallbacks.length)];
     }
   }
 
-  private async handleNoResponse(leadId: string, waTestId: string) {
-    this.logger.log(`Sem resposta após 18h úteis para lead ${leadId}`);
-    this.activity.log('no_response', `Sem resposta após 18h — seguindo para score`);
-    await this.crmService.updateWaTest(waTestId, {
-      respondeu: false,
-      tempo_resposta_min: 18 * 60,
-    });
-    await this.scoringQueue.add('score_lead', { leadId });
+  private async gerarMensagemM2A(cidade?: string): Promise<string> {
+    const custom = MysteryShopConfigStore.get().m2a_custom;
+    if (custom?.trim()) return custom.trim();
+    const fallbacks = [
+      'E pra euro, qual é a taxa de vocês hoje? Tô comparando algumas casas antes de decidir.',
+      'Vocês também fazem câmbio de libra? Qual seria o valor hoje?',
+      'E se eu quiser fazer em dinheiro físico, tem diferença na taxa?',
+      'Vocês têm taxa mínima pra transação? Perguntando porque vou comprar uns 300 dólares.',
+    ];
+    try {
+      const completion = await this.openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [{
+          role: 'user',
+          content: `Você está fazendo mystery shopping numa casa de câmbio. Acabou de perguntar sobre câmbio de dólar e precisa agora fazer uma SEGUNDA pergunta técnica mais difícil para avaliar o atendimento.
+A pergunta deve:
+- Ser sobre câmbio (euro, libra, quantidade mínima, spread, taxa de conversão, prazo de entrega, etc.)
+- Soar natural, como um cliente real indo mais fundo
+- Ser 1 frase curta
+- Em português brasileiro informal
+Retorne APENAS a pergunta, sem aspas ou explicações.`,
+        }],
+        max_tokens: 80,
+        temperature: 0.9,
+      });
+      return completion.choices[0].message.content?.trim() || fallbacks[Math.floor(Math.random() * fallbacks.length)];
+    } catch {
+      return fallbacks[Math.floor(Math.random() * fallbacks.length)];
+    }
   }
 
-  // Calcula quantos ms de calendário equivalem a N horas úteis (seg-sex, 8h-22h no Brasil UTC-3)
-  private calcBusinessHoursDelay(from: Date, businessHours: number): number {
+  private async gerarMensagemM2B(): Promise<string> {
+    const custom = MysteryShopConfigStore.get().m2b_custom;
+    if (custom?.trim()) return custom.trim();
+    const fallbacks = [
+      'Oi, me desculpe incomodar! Ainda está disponível o câmbio do dólar?',
+      'Olá! Vocês estão atendendo hoje? Queria saber a taxa do dólar.',
+      'Tudo bem? Perguntei antes sobre o dólar, vocês conseguem me responder?',
+    ];
+    try {
+      const completion = await this.openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [{
+          role: 'user',
+          content: `Você enviou uma mensagem pra uma casa de câmbio perguntando sobre dólar, mas não recebeu resposta. Escreva uma mensagem de follow-up simples e natural para cobrar a resposta.
+A mensagem deve:
+- Ser gentil e não agressiva
+- Ser curta (1 frase)
+- Em português brasileiro informal
+Retorne APENAS a mensagem, sem aspas ou explicações.`,
+        }],
+        max_tokens: 60,
+        temperature: 0.9,
+      });
+      return completion.choices[0].message.content?.trim() || fallbacks[Math.floor(Math.random() * fallbacks.length)];
+    } catch {
+      return fallbacks[Math.floor(Math.random() * fallbacks.length)];
+    }
+  }
+
+  // Calcula quantos ms de calendário equivalem a N horas úteis (seg-sex, 5h-22h no Brasil UTC-3)
+  calcBusinessHoursDelay(from: Date, businessHours: number): number {
     let remainingMin = businessHours * 60;
-    // Trabalha em horário Brasil (UTC-3)
     const toBrazilMs = (d: Date) => d.getTime() - d.getTimezoneOffset() * 60000 - 3 * 3600000;
     const fromBrMs = toBrazilMs(from);
-    let current = new Date(fromBrMs); // representa horário BR em Date local
+    let current = new Date(fromBrMs);
     let totalMs = 0;
-    const BIZ_START = 5 * 60;  // 300 min
-    const BIZ_END   = 22 * 60; // 1320 min
+    const BIZ_START = 5 * 60;
+    const BIZ_END   = 22 * 60;
 
     while (remainingMin > 0) {
       const day = current.getDay();
       const currentMin = current.getHours() * 60 + current.getMinutes();
 
       if (day === 0 || day === 6) {
-        // Final de semana → pular para segunda 8h
         const daysToMon = day === 0 ? 1 : 2;
         const next = new Date(current);
         next.setDate(next.getDate() + daysToMon);
@@ -691,21 +724,18 @@ Retorne APENAS a mensagem, sem aspas ou explicações.`,
         totalMs += next.getTime() - current.getTime();
         current = next;
       } else if (currentMin < BIZ_START) {
-        // Antes das 5h → pular para 5h
         const next = new Date(current);
         next.setHours(5, 0, 0, 0);
         totalMs += next.getTime() - current.getTime();
         current = next;
       } else if (currentMin >= BIZ_END) {
-        // Após 22h → pular para próximo dia útil 5h
-        const daysToAdd = day === 5 ? 3 : 1; // sexta → segunda
+        const daysToAdd = day === 5 ? 3 : 1;
         const next = new Date(current);
         next.setDate(next.getDate() + daysToAdd);
         next.setHours(5, 0, 0, 0);
         totalMs += next.getTime() - current.getTime();
         current = next;
       } else {
-        // Dentro do horário comercial
         const minLeftToday = BIZ_END - currentMin;
         if (remainingMin <= minLeftToday) {
           totalMs += remainingMin * 60 * 1000;
@@ -717,38 +747,10 @@ Retorne APENAS a mensagem, sem aspas ou explicações.`,
         }
       }
     }
-
     return totalMs;
   }
 
-  private async avaliarQualidadeResposta(texto: string): Promise<{ qualidade: number; isBot: boolean }> {
-    try {
-      const response = await this.openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [{
-          role: 'user',
-          content: `Avalie a resposta de uma casa de câmbio sobre cotação do dólar. Responda APENAS com JSON válido no formato: {"qualidade": N, "is_bot": B}
-
-Onde:
-- N = 0 a 100: 0=vaga/inútil, 60=com alguma info, 80=cotação + info útil, 100=completa com cotação, horário e contato
-- B = true se parece mensagem automática de bot/sistema (menus numerados, "olá seja bem-vindo", "clique 1 para", "para mais opções", saudações genéricas sem cotação), false se parece humano
-
-Resposta recebida: "${texto}"`,
-        }],
-        response_format: { type: 'json_object' },
-      });
-      const parsed = JSON.parse(response.choices[0].message.content || '{}');
-      const qualidade = Math.min(100, Math.max(0, parseInt(parsed.qualidade ?? 50)));
-      const isBot = parsed.is_bot === true;
-      return { qualidade, isBot };
-    } catch {
-      return { qualidade: 50, isBot: false };
-    }
-  }
-
   private formatNumber(numero: string): string {
-    // Evolution API espera só dígitos com código de país (ex: 5548999991234)
-    // NÃO adicionar @s.whatsapp.net — isso é JID interno do WA, não aceito no body da API
     const cleaned = numero.replace(/[^\d+]/g, '');
     if (cleaned.startsWith('+')) return cleaned.substring(1);
     if (cleaned.startsWith('55')) return cleaned;

@@ -8,10 +8,11 @@ import { CrmModule } from '../crm/crm.module';
 @Module({
   imports: [
     BullModule.registerQueue({
-      name: 'wa_test_queue',
+      name: 'mystery_shop_queue',
       limiter: { max: 1, duration: 7 * 60 * 1000 }, // 1 message per 7 minutes
     }),
-    BullModule.registerQueue({ name: 'scoring_queue' }),
+    BullModule.registerQueue({ name: 'intelligence_queue' }),
+    BullModule.registerQueue({ name: 'social_eng_queue' }),
     BullModule.registerQueue({ name: 'webhook_queue' }),
     CrmModule,
   ],

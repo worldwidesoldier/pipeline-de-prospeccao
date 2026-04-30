@@ -3,13 +3,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { X, Flame, Star, Globe, Mail, Phone, Instagram, Facebook, Twitter, MessageCircle, Loader2, ExternalLink, Copy, MapPin, Send } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
+import type { MysteryConversation } from '@/types/api'
 
 interface Props {
   leadId: string | null
   onClose: () => void
 }
 
-type Tab = 'intel' | 'reviews' | 'email'
+type Tab = 'intel' | 'conversa' | 'reviews' | 'email'
 
 export function LeadDetailDrawer({ leadId, onClose }: Props) {
   const [tab, setTab] = useState<Tab>('intel')
@@ -77,6 +78,12 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
 
   const reviews = (lead?.google_reviews_raw as any[]) ?? []
   const painPoints = (lead?.pain_points as string[]) ?? []
+
+  const { data: convData } = useQuery({
+    queryKey: ['lead-conversation', leadId],
+    queryFn: () => api.getLeadConversation(leadId!),
+    enabled: !!leadId && tab === 'conversa',
+  })
 
   return (
     <>
@@ -177,9 +184,10 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
         )}
 
         {/* Tabs */}
-        <div className="flex border-b border-brd shrink-0 bg-surface">
+        <div className="flex border-b border-brd shrink-0 bg-surface overflow-x-auto">
           {([
-            { key: 'intel', label: 'Sales Intelligence' },
+            { key: 'intel', label: 'Intelligence' },
+            { key: 'conversa', label: 'Conversa' },
             { key: 'reviews', label: `Reviews${reviews.length ? ` (${reviews.length})` : ''}` },
             { key: 'email', label: 'Cold Email' },
           ] as { key: Tab; label: string }[]).map(t => (
@@ -268,6 +276,62 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
                           </li>
                         ))}
                       </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── CONVERSA (Mystery Shop) ── */}
+              {tab === 'conversa' && (
+                <div className="p-5">
+                  {!convData ? (
+                    <div className="flex items-center justify-center h-32">
+                      <Loader2 size={18} className="animate-spin text-muted" />
+                    </div>
+                  ) : !convData.conversations.length ? (
+                    <div className="py-10 text-center text-muted text-[13px]">
+                      <p>Nenhuma conversa de mystery shop ainda.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {convData.conversations.map((c: MysteryConversation) => {
+                        const isSent = c.direction === 'SENT'
+                        const phaseColor: Record<string, string> = {
+                          M1: 'bg-yellow-500/15 text-yellow-400',
+                          M2A: 'bg-orange-500/15 text-orange-400',
+                          M2B: 'bg-red-500/15 text-red-400',
+                          ENG_V1: 'bg-purple-500/15 text-purple-400',
+                          ENG_V2: 'bg-purple-500/20 text-purple-300',
+                          ENG_V3: 'bg-purple-500/25 text-purple-200',
+                        }
+                        const phaseCls = phaseColor[c.phase] ?? 'bg-surface2 text-muted'
+                        return (
+                          <div key={c.id} className={`flex flex-col ${isSent ? 'items-end' : 'items-start'} gap-1`}>
+                            <div className="flex items-center gap-1.5">
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${phaseCls}`}>{c.phase}</span>
+                              <span className="text-[10px] text-muted">{isSent ? 'Enviado' : 'Recebido'}</span>
+                              <span className="text-[10px] text-muted">
+                                {new Date(c.sent_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                {' · '}
+                                {new Date(c.sent_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                              </span>
+                            </div>
+                            <div className={`max-w-[85%] px-3 py-2.5 rounded-xl text-[13px] leading-relaxed whitespace-pre-wrap ${
+                              isSent
+                                ? 'bg-blue-600/30 text-blue-100 border border-blue-500/25'
+                                : 'bg-surface2 text-slate-300 border border-brd'
+                            }`}>
+                              {c.message}
+                            </div>
+                            {c.metadata?.tempo_resposta_s && !isSent && (
+                              <span className="text-[10px] text-muted">
+                                Resposta em {Math.round(c.metadata.tempo_resposta_s / 60)}min
+                                {c.metadata.is_bot && ' · BOT'}
+                              </span>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                 </div>
