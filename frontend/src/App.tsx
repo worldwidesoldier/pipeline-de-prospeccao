@@ -5,13 +5,12 @@ import { api } from '@/lib/api'
 import { WaStatusButton, WaPanel } from '@/components/layout/WaPanel'
 import { HealthBar } from '@/components/layout/HealthBar'
 import { BriefingsPage } from '@/pages/Briefings'
-import { PipelinePage } from '@/pages/Pipeline'
 import { OperacaoPage } from '@/pages/Operacao'
 import { FunilPage } from '@/pages/Funil'
 import { CampanhasPage } from '@/pages/Campanhas'
 import { TemplatesPage } from '@/pages/Templates'
 
-type Tab = 'briefings' | 'pipeline' | 'leads' | 'funil' | 'campanhas' | 'templates'
+type Tab = 'briefings' | 'leads' | 'funil' | 'campanhas' | 'templates'
 
 function Clock() {
   const [time, setTime] = useState('')
@@ -39,12 +38,11 @@ export default function App() {
   const briefingsCount = briefings?.length ?? 0
 
   const TABS: { key: Tab; label: string; badge?: number }[] = [
-    { key: 'briefings', label: 'Pra Ligar',  badge: briefingsCount },
-    { key: 'pipeline',  label: 'Pipeline' },
-    { key: 'funil',     label: 'Funil' },
-    { key: 'leads',     label: 'Leads' },
-    { key: 'campanhas', label: 'Campanhas' },
     { key: 'templates', label: 'Templates' },
+    { key: 'campanhas', label: 'Campanhas' },
+    { key: 'leads',     label: 'Leads' },
+    { key: 'funil',     label: 'Funil' },
+    { key: 'briefings', label: 'Pra Ligar',  badge: briefingsCount },
   ]
 
   return (
@@ -93,7 +91,6 @@ export default function App() {
       {/* Content */}
       <main className="max-w-[1400px] mx-auto px-6 py-6">
         {tab === 'briefings' && <BriefingsPage />}
-        {tab === 'pipeline'  && <PipelinePage />}
         {tab === 'funil'     && <FunilPage />}
         {tab === 'leads'     && <OperacaoPage />}
         {tab === 'campanhas' && <CampanhasPage />}

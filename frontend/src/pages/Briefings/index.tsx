@@ -27,7 +27,7 @@ const QUAL_COLOR: Record<string, string> = {
   EXCELENTE: 'text-emerald-400',
 }
 
-function BriefingCard({ b, onOutcome }: { b: Briefing; onOutcome: () => void }) {
+function BriefingCard({ b, onOutcome, preview = false }: { b: Briefing; onOutcome: () => void; preview?: boolean }) {
   const [expanded, setExpanded] = useState(false)
   const [confirmOutcome, setConfirmOutcome] = useState<'fechou' | 'sem_interesse' | null>(null)
   const qc = useQueryClient()
@@ -38,8 +38,15 @@ function BriefingCard({ b, onOutcome }: { b: Briefing; onOutcome: () => void }) 
   const fracos = b.pontos_fracos ?? []
 
   const outcome = useMutation({
-    mutationFn: (o: 'fechou' | 'sem_interesse' | 'sem_resposta') => api.callOutcome(b.id, o),
+    mutationFn: (o: 'fechou' | 'sem_interesse' | 'sem_resposta') => {
+      if (preview) {
+        toast.info('Modo preview — ação simulada')
+        return Promise.resolve({ ok: true })
+      }
+      return api.callOutcome(b.id, o)
+    },
     onSuccess: (_, o) => {
+      if (preview) { setConfirmOutcome(null); return }
       if (o === 'fechou') toast.success('Deal fechado! 🎉')
       else if (o === 'sem_interesse') toast.success('Lead descartado')
       else toast.success('Registrado — lead permanece na fila')
@@ -224,15 +231,198 @@ function BriefingCard({ b, onOutcome }: { b: Briefing; onOutcome: () => void }) 
   )
 }
 
+// ── Mock briefings (preview) ───────────────────────────────────
+
+const MOCK_BRIEFINGS: Briefing[] = [
+  {
+    id: 'mock-1',
+    nome: 'Câmbio Sul Premium',
+    cidade: 'Porto Alegre',
+    estado: 'RS',
+    whatsapp: '5551992345678',
+    gestor_phone: '5551998123456',
+    tipo_atendimento: 'HUMANO',
+    dor_perfil: 'INEFICIENCIA',
+    qualidade_resposta: 'MEDIANA',
+    pontos_fracos: ['demorou 32min pra responder', 'sem cotação no site', 'não tem WhatsApp Business'],
+    pontos_fortes: ['atendimento humano educado', 'reputação Google 4.7★'],
+    briefing_gerado: `RESUMO EXECUTIVO
+Casa de câmbio familiar em Porto Alegre, atendimento humano porém lento (32min para responder cotação básica do dólar). Sem automação. Tem boa reputação no Google (4.7★, 89 reviews) mas perde clientes por demora.
+
+ANGLE DE ABORDAGEM
+"Oi João! Vi que vocês são bem avaliados em POA, mas testei o atendimento de vocês quarta passada e demorei 32 min pra ter resposta sobre cotação do dólar. Imagino que vocês perdem cliente assim, né?"
+
+PRINCIPAIS DORES A EXPLORAR
+• Atendente sumiu por 32 min no meio da conversa de teste
+• Não respondeu de cabeça a cotação do dólar canadense
+• Pediu pra ligar no comercial pra fechar (fricção desnecessária)
+• Site sem cotação atualizada — cliente não consegue se informar sozinho
+
+PROPOSTA DE VALOR
+Bot Fair Assist responde cotações em segundos 24/7, faz handoff pro atendente humano só pra fechar deal. Você não perde mais cliente por demora — e seu atendente foca só no que importa: fechar.
+
+OBJEÇÕES PROVÁVEIS
+1. "Já temos atendente humano" → Bot é COMPLEMENTAR. Atende fora do horário comercial e nos picos. Atendente foca só nas conversas quentes.
+2. "Vai sair caro" → 7 dias grátis sem cartão. Se não der ROI, você cancela.
+3. "Cliente prefere humano" → Handoff é instantâneo. Cliente nem percebe que começou no bot.
+
+PRÓXIMO PASSO SUGERIDO
+Pedir 15min de demo essa semana — terça ou quinta de manhã.`,
+  },
+  {
+    id: 'mock-2',
+    nome: 'Money Way Câmbio',
+    cidade: 'Florianópolis',
+    estado: 'SC',
+    whatsapp: '5548999991234',
+    gestor_phone: '5548996781234',
+    tipo_atendimento: 'BOT',
+    dor_perfil: 'OPORTUNIDADE',
+    qualidade_resposta: 'BOA',
+    pontos_fracos: ['bot atual só responde cotação', 'não faz handoff inteligente'],
+    pontos_fortes: ['já tem bot', 'site moderno', 'IG ativo'],
+    briefing_gerado: `RESUMO EXECUTIVO
+Casa de câmbio em Floripa que já tem bot básico no WhatsApp respondendo cotações. Operação digital (site bom, IG ativo, 1.2k seguidores). Bot atual é limitado — só dá cotação, não conduz pra venda.
+
+ANGLE DE ABORDAGEM
+"Pedro, testei o bot de vocês — gostei que responde rápido as cotações. Mas notei que ele não tenta fechar venda nem agendar — só responde e tchau. Posso te mostrar como nosso bot conduz cliente até a operação?"
+
+PRINCIPAIS DORES A EXPLORAR
+• Bot atual responde cotação mas não pergunta volume nem urgência
+• Sem qualificação — manda todo cliente pro mesmo atendente
+• Sem handoff inteligente — perde leads quentes pro frio do horário comercial
+
+PROPOSTA DE VALOR
+Fair Assist não só responde — qualifica, prioriza e faz handoff inteligente. Cliente quente (>$5k) vai direto pro atendente. Cliente frio recebe nutrição automática.
+
+OBJEÇÕES PROVÁVEIS
+1. "Já tenho bot" → Sim, mas o seu não vende. Eu mostro a diferença em 10min.
+2. "Migração é trabalhosa" → Plug-and-play em 24h. Sem mexer no seu setup atual.
+
+PRÓXIMO PASSO SUGERIDO
+Demo de 15min comparando bot atual vs Fair Assist — agendar pra essa semana.`,
+  },
+  {
+    id: 'mock-3',
+    nome: 'Executive Câmbio Caxias',
+    cidade: 'Caxias do Sul',
+    estado: 'RS',
+    whatsapp: '5554999990001',
+    gestor_phone: '5554998765432',
+    tipo_atendimento: 'HUMANO',
+    dor_perfil: 'INEFICIENCIA',
+    qualidade_resposta: 'RUIM',
+    pontos_fracos: ['não respondeu em 4h', 'WA mostra "visto" sem resposta', 'sem horário no site'],
+    pontos_fortes: ['empresa grande (3 unidades)', '15+ anos de mercado'],
+    briefing_gerado: `RESUMO EXECUTIVO
+Empresa estabelecida (15+ anos, 3 unidades em Caxias), MAS atendimento WA péssimo — não respondeu em 4h, viu mensagem e ignorou. Cliente sente abandono. Tamanho da operação justifica investimento em automação imediato.
+
+ANGLE DE ABORDAGEM
+"Carlos, vi que vocês têm 3 unidades em Caxias e 15 anos de mercado — operação séria. Mas testei o WA de vocês quarta — viram a mensagem e nunca responderam. Quanto vocês perdem por mês desse jeito?"
+
+PRINCIPAIS DORES A EXPLORAR
+• 3 unidades, 1 número de WA → impossível atender tudo manualmente
+• Cliente sai sem resposta = vai pro concorrente
+• "Visto" sem resposta = pior que não ter WA
+
+PROPOSTA DE VALOR
+Bot atende as 3 unidades 24/7. Roteia o cliente pra unidade mais próxima. Atendente humano só entra quando cliente tá pronto pra fechar.
+
+OBJEÇÕES PROVÁVEIS
+1. "Temos WA business" → Não importa o app. O problema é não ter quem responda.
+2. "Atendente já tá sobrecarregado" → Exato — bot tira 70% do volume dele.
+
+PRÓXIMO PASSO SUGERIDO
+Pedir reunião com gerente operacional + Carlos. 30min, terça às 10h.`,
+  },
+  {
+    id: 'mock-4',
+    nome: 'Câmbio Centro POA',
+    cidade: 'Porto Alegre',
+    estado: 'RS',
+    whatsapp: '5551991112233',
+    gestor_phone: undefined,
+    tipo_atendimento: 'HUMANO',
+    dor_perfil: 'INEFICIENCIA',
+    qualidade_resposta: 'MEDIANA',
+    pontos_fracos: ['demora 1h pra responder'],
+    briefing_gerado: 'Briefing gerado mas aguardando captura do número do gestor via Eng Social.',
+  },
+  {
+    id: 'mock-5',
+    nome: 'Turcambio Floripa',
+    cidade: 'Florianópolis',
+    estado: 'SC',
+    whatsapp: '5548997776655',
+    gestor_phone: '5548991234567',
+    tipo_atendimento: 'HUMANO',
+    dor_perfil: 'OPORTUNIDADE',
+    qualidade_resposta: 'EXCELENTE',
+    pontos_fracos: ['sem bot fora do horário'],
+    pontos_fortes: ['atendimento excelente', 'cotação em 2min', 'site profissional'],
+    briefing_gerado: `RESUMO EXECUTIVO
+Operação top em Floripa — atendimento humano EXCELENTE (resposta em 2min, cotação na ponta da língua, educados). Único gap: fora do horário comercial não tem ninguém. Lead pré-vendido — só precisa fechar valor.
+
+ANGLE DE ABORDAGEM
+"Marina, parabéns pelo atendimento de vocês — testei e vocês me responderam em 2min com cotação certinha. Tô ligando porque imagino que fora do horário vocês perdem cliente. Quero te mostrar como cobrir esse gap sem contratar mais ninguém."
+
+PRINCIPAIS DORES A EXPLORAR
+• Operação fecha 18h — clientes que precisam de cotação à noite vão pra concorrente
+• Sábado de manhã tem volume mas com staff reduzido
+• Domingo zero atendimento
+
+PROPOSTA DE VALOR
+Bot Fair Assist cobre 100% do horário não-comercial com o MESMO padrão de qualidade. Cliente recebe cotação na hora, agenda atendimento humano pra próximo dia útil.
+
+PRÓXIMO PASSO SUGERIDO
+Demo rápida de 10min — Marina já tá vendida no conceito, só falta ver funcionando.`,
+    call_outcome: 'sem_resposta',
+  },
+  {
+    id: 'mock-6',
+    nome: 'AMB Câmbio Bento Gonçalves',
+    cidade: 'Bento Gonçalves',
+    estado: 'RS',
+    whatsapp: '5554999998888',
+    gestor_phone: '5554998887777',
+    tipo_atendimento: 'BOT',
+    dor_perfil: 'INEFICIENCIA',
+    qualidade_resposta: 'RUIM',
+    pontos_fracos: ['bot quebrado', 'respostas duplicadas', 'sem fallback humano'],
+    pontos_fortes: ['quer automação (já tentou)'],
+    briefing_gerado: `RESUMO EXECUTIVO
+Já tentou automação mas o bot atual tá quebrado — manda mensagem duplicada, não entende cotação de moedas menos comuns, não tem fallback pra humano. Lead QUENTE — entende o valor da automação, só precisa de uma solução que funcione.
+
+ANGLE DE ABORDAGEM
+"Roberto, vi que vocês já têm bot no WA mas testei e ele tá com bug — me mandou a mesma mensagem 3x e travou quando perguntei sobre dólar canadense. Vocês já sabem que automação é o caminho — só faltou a ferramenta certa."
+
+PRINCIPAIS DORES A EXPLORAR
+• Bot atual passa imagem de empresa amadora pro cliente
+• Sem qualificação — cliente quente espera junto com curioso
+• Sem analytics — não sabe o que tá funcionando
+
+PROPOSTA DE VALOR
+Fair Assist é o bot que vocês precisavam: estável, com fallback humano automático, qualifica e prioriza leads, dashboard com métricas em tempo real.
+
+PRÓXIMO PASSO SUGERIDO
+Migração assistida em 24h — sem perder histórico. Demo + plano de migração na mesma reunião.`,
+  },
+]
+
 export function BriefingsPage() {
+  const [preview, setPreview] = useState(false)
   const { data, isLoading } = useQuery({
     queryKey: ['briefings'],
     queryFn: api.getBriefings,
     refetchInterval: 60_000,
   })
 
-  const total = data?.length ?? 0
-  const comNumero = data?.filter(b => b.gestor_phone).length ?? 0
+  const realCount = data?.length ?? 0
+  const showPreview = preview || (!isLoading && realCount === 0)
+  const briefings = showPreview ? MOCK_BRIEFINGS : (data ?? [])
+
+  const total = briefings.length
+  const comNumero = briefings.filter(b => b.gestor_phone).length
 
   return (
     <div className="space-y-5">
@@ -244,13 +434,31 @@ export function BriefingsPage() {
             Leads com mystery shop completo e briefing gerado
           </p>
         </div>
-        {!isLoading && (
-          <div className="flex items-center gap-4 text-[12px]">
-            <span className="text-muted">{total} lead{total !== 1 ? 's' : ''} no total</span>
-            <span className="text-green-400 font-semibold">{comNumero} com número</span>
-          </div>
-        )}
+        <div className="flex items-center gap-3 text-[12px]">
+          {!isLoading && (
+            <>
+              <span className="text-muted">{total}{showPreview ? ' (preview)' : ''} lead{total !== 1 ? 's' : ''} no total</span>
+              <span className="text-green-400 font-semibold">{comNumero} com número</span>
+              <button
+                onClick={() => setPreview(v => !v)}
+                className={`text-[11px] px-2.5 py-1 rounded-lg border transition-colors ${
+                  showPreview
+                    ? 'bg-purple-500/20 border-purple-500/30 text-purple-400'
+                    : 'bg-surface2 border-brd text-muted hover:text-white'
+                }`}
+              >
+                {showPreview ? '✕ Fechar preview' : '👁 Ver preview'}
+              </button>
+            </>
+          )}
+        </div>
       </div>
+
+      {showPreview && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-purple-500/10 border border-purple-500/20 rounded-lg">
+          <span className="text-[11px] text-purple-400">Preview com dados fictícios — assim vai aparecer quando seus leads completarem o pipeline</span>
+        </div>
+      )}
 
       {/* Conteúdo */}
       {isLoading ? (
@@ -259,7 +467,7 @@ export function BriefingsPage() {
             <div key={i} className="bg-surface border border-brd rounded-xl h-40 animate-pulse" />
           ))}
         </div>
-      ) : !data?.length ? (
+      ) : !briefings.length ? (
         <div className="flex flex-col items-center justify-center py-24 text-muted gap-3">
           <PhoneCall size={40} className="opacity-20" />
           <p className="text-[15px] text-white/50">Nenhum lead pronto para ligar ainda</p>
@@ -267,7 +475,14 @@ export function BriefingsPage() {
         </div>
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(380px,1fr))] gap-4">
-          {data.map(b => <BriefingCard key={b.id} b={b} onOutcome={() => {}} />)}
+          {briefings.map(b => (
+            <BriefingCard
+              key={b.id}
+              b={b}
+              onOutcome={() => {}}
+              preview={showPreview}
+            />
+          ))}
         </div>
       )}
     </div>

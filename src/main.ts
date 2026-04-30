@@ -21,7 +21,19 @@ async function bootstrap() {
   });
 
   // Serve static dashboard files
-  app.useStaticAssets(join(__dirname, 'public'));
+  // - index.html: nunca cacheia (sempre pega bundle novo)
+  // - assets/* (filename tem hash): cache forever
+  app.useStaticAssets(join(__dirname, 'public'), {
+    setHeaders: (res: any, filepath: string) => {
+      if (filepath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      } else if (/\/assets\/.+\.(js|css|woff2?|png|svg|jpg)$/.test(filepath)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    },
+  });
 
   app.enableCors();
 

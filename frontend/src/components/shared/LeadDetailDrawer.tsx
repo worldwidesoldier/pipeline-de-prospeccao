@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { X, Flame, Star, Globe, Mail, Phone, Instagram, Facebook, Twitter, MessageCircle, Loader2, ExternalLink, Copy, MapPin, Send } from 'lucide-react'
+import { X, Flame, Star, Globe, Mail, Phone, Instagram, Facebook, Twitter, MessageCircle, Loader2, ExternalLink, Copy, MapPin, Send, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import type { MysteryConversation } from '@/types/api'
@@ -8,11 +8,143 @@ import type { MysteryConversation } from '@/types/api'
 interface Props {
   leadId: string | null
   onClose: () => void
+  mockLead?: any
 }
 
 type Tab = 'intel' | 'conversa' | 'reviews' | 'email'
 
-export function LeadDetailDrawer({ leadId, onClose }: Props) {
+// ── Mock conversation builder (preview mode) ────────────────────
+
+function buildMockConversation(lead: any): any[] {
+  const idx = getStageIndex(lead?.status)
+  const sentAt = lead?.phase_sent_at ? new Date(lead.phase_sent_at).getTime() : Date.now() - 3600_000
+  const out: any[] = []
+  // M1
+  if (idx >= 1) {
+    out.push({ id: 'mock-m1-out', phase: 'M1', direction: 'SENT', message: 'Oi, tudo bem? Queria saber o valor do dólar hoje pra compra. Obrigado!', sent_at: new Date(sentAt - 30 * 60_000).toISOString() })
+  }
+  // M2A (sent + recebido se ativo)
+  if (idx >= 2) {
+    out.push({ id: 'mock-m1-in', phase: 'M1', direction: 'RECEIVED', message: 'Oi! Tudo bem. O dólar tá R$ 5.42 pra compra hoje.', sent_at: new Date(sentAt - 25 * 60_000).toISOString(), metadata: { tempo_resposta_s: 300 } })
+    out.push({ id: 'mock-m2a-out', phase: 'M2A', direction: 'SENT', message: 'Beleza, e o euro? Tô vendo opções de compra fracionada também. Vocês fazem?', sent_at: new Date(sentAt - 20 * 60_000).toISOString() })
+  }
+  if (idx >= 3) {
+    out.push({ id: 'mock-m2a-in', phase: 'M2A', direction: 'RECEIVED', message: 'Euro tá R$ 5.89 e sim, fazemos compra fracionada a partir de US$ 100. Quer agendar?', sent_at: new Date(sentAt - 15 * 60_000).toISOString(), metadata: { tempo_resposta_s: 300 } })
+  }
+  if (idx >= 5) {
+    const variacao = lead?.engenharia_social_variacao ?? 1
+    out.push({ id: 'mock-eng-out', phase: `ENG_V${variacao}`, direction: 'SENT', message: 'Obrigado! Olha, sou consultor de tecnologia pra casas de câmbio. Posso falar direto com o gestor de vocês?', sent_at: new Date(sentAt - 5 * 60_000).toISOString() })
+  }
+  return out
+}
+
+// ── Journey stepper ────────────────────────────────────────────
+
+const JOURNEY_STAGES = [
+  { key: 'enriched',        label: 'Enriquecido', short: 'Enrich' },
+  { key: 'ms_m1_sent',      label: 'M1 enviado',  short: 'M1' },
+  { key: 'ms_m2a_sent',     label: 'M2A enviado', short: 'M2A' },
+  { key: 'ativo',           label: 'Conversou',   short: 'Ativo' },
+  { key: 'intelligence_done', label: 'Analisado', short: 'Análise' },
+  { key: 'eng_v1',          label: 'Eng. social', short: 'Eng' },
+  { key: 'briefing_done',   label: 'Pra ligar',   short: 'Pra Ligar' },
+] as const
+
+function getStageIndex(status?: string): number {
+  if (!status) return -1
+  const map: Record<string, number> = {
+    novo: -1, sem_whatsapp: 0, sem_whatsapp_fixo: 0, enriched: 0,
+    ms_m1_sent: 1, ms_m2b_sent: 1,
+    ms_m2a_sent: 2,
+    ativo: 3,
+    intelligence_done: 4,
+    eng_v1: 5, eng_v2: 5, eng_v3: 5,
+    briefing_done: 6,
+    morto: -2,
+  }
+  return map[status] ?? -1
+}
+
+function JourneyStepper({ lead, conversations }: { lead: any; conversations?: any[] }) {
+  const currentIdx = getStageIndex(lead?.status)
+  const isMorto = lead?.status === 'morto' || lead?.tag_final === 'MORTO'
+
+  // Try to find timestamp for each stage from conversation data
+  const timestamps: Record<string, string> = {}
+  conversations?.forEach((c: any) => {
+    if (c.direction !== 'SENT') return
+    if (c.phase === 'M1' && !timestamps.ms_m1_sent) timestamps.ms_m1_sent = c.sent_at
+    if (c.phase === 'M2A' && !timestamps.ms_m2a_sent) timestamps.ms_m2a_sent = c.sent_at
+  })
+  if (lead?.criado_em) timestamps.enriched = lead.criado_em
+  if (lead?.engenharia_social_sent_at) timestamps.eng_v1 = lead.engenharia_social_sent_at
+
+  const fmt = (iso?: string) => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    const today = new Date()
+    const isToday = d.toDateString() === today.toDateString()
+    return isToday
+      ? d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+      : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  }
+
+  return (
+    <div className="px-5 py-3 bg-surface2/40 border-b border-brd shrink-0">
+      <div className="flex items-center gap-1">
+        {JOURNEY_STAGES.map((stage, i) => {
+          const done = !isMorto && i < currentIdx
+          const current = !isMorto && i === currentIdx
+
+          const dotColor = current
+            ? 'bg-blue-500 ring-4 ring-blue-500/20 animate-pulse'
+            : done
+              ? 'bg-emerald-500'
+              : isMorto
+                ? 'bg-red-500/30'
+                : 'bg-surface border border-brd'
+
+          const lineColor = (i < currentIdx && !isMorto) ? 'bg-emerald-500/60' : 'bg-brd'
+          const labelColor = current
+            ? 'text-blue-300 font-bold'
+            : done
+              ? 'text-emerald-400/80'
+              : isMorto
+                ? 'text-red-400/40'
+                : 'text-muted/50'
+
+          const ts = timestamps[stage.key]
+
+          return (
+            <div key={stage.key} className="flex-1 flex flex-col items-center min-w-0">
+              <div className="flex items-center w-full">
+                <div className={`flex-1 h-0.5 ${i === 0 ? 'invisible' : lineColor}`} />
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${dotColor}`}>
+                  {done && <Check size={11} className="text-white" />}
+                  {current && <span className="w-2 h-2 rounded-full bg-white" />}
+                </div>
+                <div className={`flex-1 h-0.5 ${i === JOURNEY_STAGES.length - 1 ? 'invisible' : (i < currentIdx && !isMorto ? 'bg-emerald-500/60' : 'bg-brd')}`} />
+              </div>
+              <div className={`text-[9px] font-semibold mt-1 text-center ${labelColor}`}>
+                {stage.short}
+              </div>
+              {ts && (done || current) && (
+                <div className="text-[8px] text-muted/60 tabular-nums">{fmt(ts)}</div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      {isMorto && (
+        <div className="mt-2 text-center text-[11px] text-red-400/80 font-semibold">
+          Lead marcado como MORTO
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function LeadDetailDrawer({ leadId, onClose, mockLead }: Props) {
   const [tab, setTab] = useState<Tab>('intel')
   const [emailContext, setEmailContext] = useState('')
   const [generatedEmail, setGeneratedEmail] = useState<{ assunto: string; corpo: string } | null>(null)
@@ -27,11 +159,14 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
     setManualWa('')
   }, [leadId])
 
-  const { data: lead, isLoading } = useQuery({
+  const { data: realLead, isLoading: realLoading } = useQuery({
     queryKey: ['lead', leadId],
     queryFn: () => api.getLead(leadId!),
-    enabled: !!leadId,
+    enabled: !!leadId && !mockLead,
   })
+
+  const lead = mockLead ?? realLead
+  const isLoading = !mockLead && realLoading
 
   // Restore draft salvo
   useEffect(() => {
@@ -66,6 +201,13 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
     onError: () => toast.error('Erro ao gerar email'),
   })
 
+  // ALL hooks must be called before any early return (rules of hooks)
+  const { data: convData } = useQuery({
+    queryKey: ['lead-conversation', leadId],
+    queryFn: () => api.getLeadConversation(leadId!),
+    enabled: !!leadId && !mockLead, // load always so stepper can show timestamps
+  })
+
   if (!leadId) return null
 
   const waHref = lead?.whatsapp
@@ -79,11 +221,9 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
   const reviews = (lead?.google_reviews_raw as any[]) ?? []
   const painPoints = (lead?.pain_points as string[]) ?? []
 
-  const { data: convData } = useQuery({
-    queryKey: ['lead-conversation', leadId],
-    queryFn: () => api.getLeadConversation(leadId!),
-    enabled: !!leadId && tab === 'conversa',
-  })
+  // Mock conversation for preview mode (so stepper shows timestamps)
+  const mockConversations = mockLead ? buildMockConversation(mockLead) : null
+  const conversations = mockConversations ?? convData?.conversations
 
   return (
     <>
@@ -96,7 +236,22 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
       {/* Drawer */}
       <div className="fixed top-0 right-0 h-full w-[520px] max-w-[95vw] bg-[#0f1117] border-l border-brd z-50 flex flex-col shadow-2xl overflow-hidden">
 
+        {/* Empty state — when no lead data */}
+        {!isLoading && !lead && (
+          <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6">
+            <div className="w-12 h-12 rounded-full bg-surface2 flex items-center justify-center">
+              <X size={24} className="text-muted/50" />
+            </div>
+            <p className="text-[14px] text-white font-semibold">Lead não encontrado</p>
+            <p className="text-[12px] text-muted text-center">Esse lead pode ter sido removido ou ainda não foi processado.</p>
+            <button onClick={onClose} className="mt-2 px-4 py-2 bg-blue-600/20 border border-blue-500/30 text-blue-300 text-[13px] rounded-lg hover:bg-blue-600/30 transition-colors">
+              Fechar
+            </button>
+          </div>
+        )}
+
         {/* Header */}
+        {(isLoading || lead) && <>
         <div className="flex items-start justify-between px-5 py-4 border-b border-brd bg-surface shrink-0">
           <div className="flex-1 min-w-0 pr-3">
             {isLoading ? (
@@ -182,6 +337,9 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
             )}
           </div>
         )}
+
+        {/* Journey stepper */}
+        {lead && <JourneyStepper lead={lead} conversations={conversations} />}
 
         {/* Tabs */}
         <div className="flex border-b border-brd shrink-0 bg-surface overflow-x-auto">
@@ -284,17 +442,17 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
               {/* ── CONVERSA (Mystery Shop) ── */}
               {tab === 'conversa' && (
                 <div className="p-5">
-                  {!convData ? (
+                  {!conversations && !mockLead ? (
                     <div className="flex items-center justify-center h-32">
                       <Loader2 size={18} className="animate-spin text-muted" />
                     </div>
-                  ) : !convData.conversations.length ? (
+                  ) : !conversations || conversations.length === 0 ? (
                     <div className="py-10 text-center text-muted text-[13px]">
                       <p>Nenhuma conversa de mystery shop ainda.</p>
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {convData.conversations.map((c: MysteryConversation) => {
+                      {conversations.map((c: MysteryConversation) => {
                         const isSent = c.direction === 'SENT'
                         const phaseColor: Record<string, string> = {
                           M1: 'bg-yellow-500/15 text-yellow-400',
@@ -367,7 +525,7 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
               )}
 
               {/* ── COLD EMAIL ── */}
-              {tab === 'email' && (
+              {tab === 'email' && lead && (
                 <div className="p-5 space-y-4">
                   {!lead?.email && (
                     <div className="p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-xl text-yellow-400 text-[12px]">
@@ -441,6 +599,7 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
             </>
           )}
         </div>
+        </>}
       </div>
     </>
   )

@@ -19,7 +19,11 @@ export function WaStatusButton({ onClick }: { onClick: () => void }) {
         ? <Wifi size={12} className="text-green-400" />
         : <WifiOff size={12} className="text-red-400 animate-pulse" />}
       <span className={data?.connected ? 'text-green-400' : 'text-red-400'}>
-        {data == null ? 'Verificando...' : data.connected ? (data.number ? `+${data.number}` : 'Conectado') : 'Desconectado'}
+        {data == null
+          ? 'Verificando...'
+          : data.connected
+            ? (data.number ? `+${data.number}` : 'Conectado')
+            : 'Conectar WhatsApp'}
       </span>
     </button>
   )
@@ -55,31 +59,67 @@ export function WaPanel({ open, onClose }: { open: boolean; onClose: () => void 
 
   if (!open) return null
 
+  const isConnected = !!status?.connected
+
   return (
     <>
       <div className="fixed inset-0 z-[150]" onClick={onClose} />
-      <div className="fixed top-[62px] right-6 z-[200] w-64 bg-surface border border-brd rounded-xl shadow-2xl p-4 space-y-3">
-        <p className="text-[10px] font-semibold text-muted uppercase tracking-wide">WhatsApp</p>
-        <p className="text-[13px] text-white">{status?.number ? `+${status.number}` : 'Nenhum número vinculado'}</p>
+      <div className="fixed top-[62px] right-6 z-[200] w-80 bg-surface border border-brd rounded-xl shadow-2xl p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-[10px] font-semibold text-muted uppercase tracking-wide">WhatsApp</p>
+          {isConnected
+            ? <Wifi size={12} className="text-green-400" />
+            : <WifiOff size={12} className="text-red-400" />}
+        </div>
+
+        {/* Connected state — show current number */}
+        {isConnected && (
+          <div className="bg-green-500/8 border border-green-500/25 rounded-lg p-3">
+            <p className="text-[10px] text-green-400/70 mb-1">Número conectado</p>
+            <p className="text-[14px] text-green-300 font-mono">+{status?.number}</p>
+            <p className="text-[11px] text-green-400 mt-1">● Online</p>
+          </div>
+        )}
+
+        {/* Disconnected state — clean call to action */}
+        {!isConnected && !qr && !reconnecting && (
+          <div className="bg-surface2/40 border border-brd/40 rounded-lg p-3">
+            <p className="text-[12px] text-slate-300 leading-relaxed">
+              Aperta abaixo pra gerar um QR Code novo. Aí você escaneia com <span className="font-semibold text-white">qualquer WhatsApp</span> — esse número vai virar o conectado ao sistema.
+            </p>
+          </div>
+        )}
+
+        {/* Action button */}
         <button
           onClick={() => reconnect.mutate()}
           disabled={reconnect.isPending}
-          className="w-full flex items-center justify-center gap-2 py-2 bg-surface2 border border-brd text-[13px] rounded-lg hover:bg-brd transition-colors disabled:opacity-50"
+          className="w-full flex items-center justify-center gap-2 py-2.5 bg-blue-600/20 border border-blue-500/30 text-blue-300 text-[13px] font-semibold rounded-lg hover:bg-blue-600/30 transition-colors disabled:opacity-50"
         >
           <RefreshCw size={13} className={reconnect.isPending ? 'animate-spin' : ''} />
-          Reconectar / Gerar QR
+          {isConnected ? 'Gerar QR pra trocar de número' : 'Gerar QR Code'}
         </button>
+
+        {/* QR + instructions */}
         {qr && (
-          <div className="space-y-2">
+          <div className="space-y-3">
             <img src={qr} alt="QR Code" className="w-full bg-white p-2 rounded-lg" />
-            <p className="text-[11px] text-muted text-center">WhatsApp → Aparelhos conectados</p>
-            <p className="text-[11px] text-yellow-400 text-center">Expira em {countdown}s</p>
+            <div className="bg-surface2/60 rounded-lg p-3 border border-brd/40">
+              <p className="text-[11px] font-semibold text-white mb-1.5">Como escanear:</p>
+              <ol className="text-[11px] text-muted space-y-0.5 list-decimal list-inside leading-relaxed">
+                <li>Abre o WhatsApp no celular</li>
+                <li>Configurações → <span className="text-slate-300">Aparelhos conectados</span></li>
+                <li><span className="text-slate-300">Conectar aparelho</span> → escaneia o QR acima</li>
+              </ol>
+            </div>
+            <p className="text-[11px] text-yellow-400 text-center tabular-nums">QR expira em {countdown}s</p>
           </div>
         )}
+
         {!qr && reconnecting && (
-          <div className="flex items-center gap-2 text-muted text-[12px]">
-            <QrCode size={13} />
-            Aguardando QR Code...
+          <div className="flex items-center gap-2 text-muted text-[12px] py-2 justify-center">
+            <QrCode size={13} className="animate-pulse" />
+            Gerando QR Code...
           </div>
         )}
       </div>
